@@ -1,0 +1,5 @@
+<Project>
+  <Target Name="PrepareLocalPackageFeed" BeforeTargets="CollectPackageReferences">
+    <MakeDir Directories="$(PackageOutputPath)" />
+  </Target>
+</Project>

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0" PrivateAssets="all" />
+    <ProjectReference Include="../TheLithium.Imprint.Specifications/TheLithium.Imprint.Specifications.csproj" />
+    <ProjectReference Include="../../src/TheLithium.Imprint.Tool/TheLithium.Imprint.Tool.csproj" />
+    <Compile Include="../TheLithium.Imprint.Specifications/TestSupport.cs" Link="Specifications/TestSupport.cs" />
+  </ItemGroup>
+</Project>

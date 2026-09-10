@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TheLithium.Imprint project configuration",
+  "description": "Runtime project defaults; no user-edited MSBuild snapshot settings are required.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "version": {
+      "const": 1,
+      "default": 1
+    },
+    "update": {
+      "enum": [
+        "verify",
+        "missing",
+        "all"
+      ],
+      "default": "verify"
+    },
+    "directoryName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96,
+      "pattern": "^[^<>:\"/\\\\|?*\\u0000-\\u001f]+$",
+      "default": "__snapshots__"
+    },
+    "rootDirectory": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Project-relative or absolute override of the source-adjacent default root."
+    },
+    "artifactDirectory": {
+      "type": "string",
+      "minLength": 1,
+      "default": "TestResults/TheLithium.Imprint"
+    },
+    "textExtension": {
+      "enum": [
+        "snap",
+        "txt"
+      ],
+      "default": "snap"
+    },
+    "naming": {
+      "enum": [
+        "name-then-order",
+        "order",
+        "explicit-only"
+      ],
+      "default": "name-then-order"
+    },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "numericTolerance": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 79228162514264337593543950335,
+          "default": 0
+        },
+        "ignoreArrayOrder": {
+          "type": "boolean",
+          "default": false
+        },
+        "ignoreStringCase": {
+          "type": "boolean",
+          "default": false
+        },
+        "ignoreLineEndings": {
+          "type": "boolean",
+          "default": true
+        },
+        "ignoreTrailingWhitespace": {
+          "type": "boolean",
+          "default": false
+        },
+        "maxUnorderedArrayLength": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024,
+          "default": 256
+        }
+      }
+    },
+    "allowEmpty": {
+      "type": "boolean",
+      "default": false
+    },
+    "maxDepth": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 256,
+      "default": 64
+    },
+    "maxNodes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000000,
+      "default": 100000
+    },
+    "maxBytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 268435456,
+      "default": 4194304
+    },
+    "lockTimeoutSeconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 300,
+      "default": 10
+    }
+  }
+}

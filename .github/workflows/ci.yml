@@ -1,0 +1,51 @@
+name: Build and verify
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+            executable: TheLithium.Imprint.Specifications.exe
+          - os: ubuntu-latest
+            rid: linux-x64
+            executable: TheLithium.Imprint.Specifications
+          - os: macos-latest
+            rid: osx-arm64
+            executable: TheLithium.Imprint.Specifications
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Build
+        run: dotnet build -c Release
+      - name: Test
+        run: dotnet test -c Release --no-build --logger trx --results-directory artifacts/test-results
+      - name: Pack
+        run: dotnet pack -c Release --no-build
+      - name: Test package consumers
+        run: dotnet test -c Release -p:UsePackageReferences=true --logger trx --results-directory artifacts/package-test-results
+      - name: Publish package consumer as Native AOT
+        run: dotnet publish tests/TheLithium.Imprint.Specifications -c Release -r ${{ matrix.rid }} -p:UsePackageReferences=true -p:PublishAot=true -o artifacts/native/${{ matrix.rid }}
+      - name: Run native specifications
+        run: ./artifacts/native/${{ matrix.rid }}/${{ matrix.executable }} --expect-aot
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-${{ matrix.rid }}
+          path: |
+            artifacts/test-results
+            artifacts/package-test-results
+            artifacts/packages

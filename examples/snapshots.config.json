@@ -1,0 +1,22 @@
+{
+  "$schema": "../snapshots.schema.json",
+  "version": 1,
+  "update": "verify",
+  "directoryName": "__snapshots__",
+  "artifactDirectory": "TestResults/TheLithium.Imprint",
+  "textExtension": "snap",
+  "naming": "name-then-order",
+  "allowEmpty": false,
+  "maxDepth": 64,
+  "maxNodes": 100000,
+  "maxBytes": 4194304,
+  "lockTimeoutSeconds": 10,
+  "comparison": {
+    "numericTolerance": 0,
+    "ignoreArrayOrder": false,
+    "ignoreStringCase": false,
+    "ignoreLineEndings": true,
+    "ignoreTrailingWhitespace": false,
+    "maxUnorderedArrayLength": 256
+  }
+}
