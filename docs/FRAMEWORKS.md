@@ -1,53 +1,62 @@
 # Framework integration
 
-The runtime is runner-independent. The portable callback boundary is tested with real xUnit, NUnit, and MSTest runners. The executable specification project separately verifies the runtime under Native AOT. See [validation](VALIDATION.md).
+The normal integration is a regular test method with AssertSnapshot or UpdateSnapshot calls. The package build target supplies the lifetime at compile time, so no xUnit, NUnit, or MSTest adapter is required.
 
 ## Synchronous tests
 
-```csharp
-// xUnit: [Fact]
-// NUnit: [Test]
-// MSTest: [TestMethod]
+~~~csharp
+// xUnit: [Fact], NUnit: [Test], MSTest: [TestMethod]
 public void Example()
 {
-    Snapshots.Run(() =>
-    {
-        var result = new { Count = 3, Names = new[] { "a", "b", "c" } };
-        result.Snapshot();
-        "three results".Snapshot("stdout");
-        // Put the framework's ordinary assertions here.
-    });
+    var result = new { Count = 3, Names = new[] { "a", "b", "c" } };
+
+    result.AssertSnapshot("result");
+    "three results".AssertSnapshot("stdout");
+
+    // Keep the framework's ordinary assertions beside the snapshots.
 }
-```
+~~~
 
 ## Asynchronous tests
 
-```csharp
-public Task ExampleAsync() => Snapshots.RunAsync(async () =>
+~~~csharp
+public async Task ExampleAsync()
 {
     var result = await LoadAsync();
-    result.Snapshot();
-    // Ordinary assertions and all awaited work belong inside this callback.
-});
-```
+    result.AssertSnapshot();
+}
+~~~
 
-Task<SnapshotReport> is a Task and can be returned as Task. Use RunAsync for Task-returning work; the accidental Func<Task> overload of Run is a compile-time obsolete error to discourage async-void conversion.
+Task, Task<T>, ValueTask, and ValueTask<T> methods are supported. The original method signature remains visible to the runner. An async void method or async custom awaitable, iterator, ref/in/out method, by-ref return, or test declared on a struct is rejected with a compile diagnostic because it cannot provide a reliable completion boundary.
 
-SnapshotSettings is independent of the runner's own test attributes. Recognized constant Xunit DisplayName and NUnit/MSTest Description metadata is read from Roslyn symbols at compilation, including derived test attributes and MSTest constructor display names. Runner-generated dynamic display names, theory-row discovery metadata, fixtures, and teardown outcomes are not inferred automatically. Supply Name/Case/Identity where needed. Per-row display names never rename the whole parameterized method.
+## Parameterized tests
+
+xUnit InlineData, NUnit TestCase, MSTest DataRow, and compatible parameterized attributes work without wrapper code. The compiled method receives the actual values, and the build integration creates a deterministic case discriminator from those values. Each row therefore gets its own test folder. A row's dynamic display text is not used as the case identity. Use an explicit AssertSnapshot name for each logical output and use SnapshotTestOptions.Case only in a custom integration.
+
+The case discriminator covers data supplied by the test framework and uses the same static type contract as snapshot serialization. An opaque row value needs an explicit custom runner case key. Runtime loops inside one invocation still share one case, so include a stable id in the capture name when the loop produces several logical files, for example `item.AssertSnapshot($"result-{item.Id}")`.
+
+## Names and display metadata
+
+The default suite and test folders use the containing type and C# method names. SnapshotSettings(Name = "...") overrides either folder. The generator records constant display or description metadata from known and compatible test attributes, including inherited framework attributes. The project setting preferDisplayNames opts into that metadata for the test folder. Row-specific display names are intentionally ignored for the whole method because they describe one invocation rather than the method identity.
 
 ## Explicit adapter boundary
 
-A custom runner/integration can use:
+A custom runner that cannot use the package build target can establish the scope directly:
 
-```csharp
-using var scope = Snapshots.Begin(new()
+~~~csharp
+using var scope = Snapshots.Begin(new SnapshotTestOptions
 {
     Identity = new SnapshotTestIdentity(
-        projectRoot, sourceFile, "InstallTests", "Install", Case: "default")
+        ProjectDirectory: projectRoot,
+        SourceFile: sourceFile,
+        Suite: "ContractTests",
+        Test: "CurrentContract",
+        Case: "default")
 });
+
 try
 {
-    await ExecuteTestBodyAndRelevantTeardownAsync();
+    ExecuteTestBodyAndRelevantTeardown();
     scope.Complete();
 }
 catch (Exception error)
@@ -55,16 +64,10 @@ catch (Exception error)
     scope.Abort(error);
     throw;
 }
-```
+~~~
 
-The scope must be established in the execution context in which test code is invoked. AsyncLocal is not a replacement for correct execution-context propagation by an adapter. Standalone Snapshot calls outside a scope fail clearly.
-
-Complete can throw SnapshotMismatchException, SnapshotCaptureException, SnapshotConfigurationException, SnapshotConflictException, or storage/comparison errors. A conventional runner treats uncaught errors as test failure; specialized failure categories and artifact attachments need that runner's own integration.
-
-The core cannot guarantee that a future runner teardown succeeds after the callback completes. Either put the relevant cleanup inside the callback or make the adapter control the real final execution boundary. Do not approve from an asynchronously observed result message and claim it was part of the test's assertion phase.
+The adapter must call Complete only after work that should influence approval succeeds. Dispose abandons an open scope and never approves it. A conventional runner treats an uncaught SnapshotMismatchException, SnapshotCaptureException, SnapshotConfigurationException, or SnapshotConflictException as a test failure. Runner-specific reporting and artifact attachments remain the runner's responsibility.
 
 ## Native AOT
 
-The snapshot runtime uses no reflective discovery. Its compiler generator is a managed build-time component and is not shipped as an application runtime dependency. A Native AOT host must still be able to compile its test runner, assertion libraries, application code, and other dependencies.
-
-The supplied executable specification harness deliberately discovers tests through an explicit array of delegates, so its own discovery does not require reflection. It is the built-in end-to-end native verification target. It is not evidence that every external test framework supports Native AOT.
+The runtime has no reflective discovery. The generator and MSBuild task run during compilation and are not application runtime dependencies. A Native AOT application still needs an AOT-compatible test runner, assertion library, and application under test. The repository's executable specification harness uses an explicit delegate list so its own discovery does not depend on reflection.

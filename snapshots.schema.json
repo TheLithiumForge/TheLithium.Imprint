@@ -18,7 +18,7 @@
         "missing",
         "all"
       ],
-      "default": "verify"
+      "default": "missing"
     },
     "directoryName": {
       "type": "string",
@@ -26,6 +26,11 @@
       "maxLength": 96,
       "pattern": "^[^<>:\"/\\\\|?*\\u0000-\\u001f]+$",
       "default": "__snapshots__"
+    },
+    "preferDisplayNames": {
+      "type": "boolean",
+      "description": "Use constant framework display or description metadata for the test folder when available.",
+      "default": false
     },
     "rootDirectory": {
       "type": [
@@ -37,14 +42,14 @@
     "artifactDirectory": {
       "type": "string",
       "minLength": 1,
-      "default": "TestResults/TheLithium.Imprint"
+      "default": "artifacts/imprint/failures"
     },
     "textExtension": {
       "enum": [
         "snap",
         "txt"
       ],
-      "default": "snap"
+      "default": "txt"
     },
     "naming": {
       "enum": [

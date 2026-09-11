@@ -58,3 +58,7 @@ nunit-*.xml
 # Imprint generated transaction and lock files
 **/__snapshots__/.imprint/transactions/
 **/__snapshots__/.imprint/*.lock
+**/TestResults/
+.vs/
+.idea/
+*.user

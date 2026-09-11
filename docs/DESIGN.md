@@ -1,62 +1,45 @@
 # Design and implementation map
 
-## Boundary and state
+## Test lifetime
 
-Snapshots.Run/RunAsync create an ambient SnapshotScope. States are Open, Completing, Completed, Faulted, and Aborted. Capture serializes and materializes data immediately while holding the scope gate. Duplicate names, unsupported writers, limits, getter failures, and other capture errors poison approval even when caught by test code.
+The package build target parses the test project during compilation and replaces only the compile input for methods that directly or indirectly reach AssertSnapshot or UpdateSnapshot. The replacement calls a small runtime runner around a local function containing the original body. This keeps the test method's public signature and ordinary runner flow while allowing completion after a successful return. The automatic wrapper accepts Task and ValueTask return shapes; async custom awaitables are rejected rather than completed early.
 
-Complete compares the full set and builds structured entry results. Any unauthorized Missing/Changed/Unused result prevents all writes. Completed scopes cannot capture again. Dispose abandons and restores the previous ambient scope; it never verifies or approves. The original callback exception survives best-effort artifact failures.
+Captures serialize immediately into memory. Complete compares the complete set, produces structured entry results, and commits the staged set only when every entry is authorized. A missing entry is authorized by the default Missing policy. A changed or unused entry requires All. Any capture error or method exception aborts the scope and leaves the baseline untouched. Awaited work and finally blocks inside the method are part of the boundary; runner teardown after the method is not.
 
-Opening a scope reads and fingerprints its baseline. Completion verifies that fingerprint even when no changes are authorized/needed. Cooperating concurrent writers cannot silently overwrite each other's approvals.
+The runtime uses AsyncLocal for nested helper calls. A helper that only captures uses the active scope. A helper that explicitly opens a boundary can use Snapshots.Begin with a supplied SnapshotTestIdentity, and explicit callers can still use Snapshots.Run or Snapshots.RunAsync.
 
-## No runtime reflection
+## Compile-time serialization and identity
 
-SnapshotGenerator inspects semantic symbols at compilation, emits SnapshotWriter<T> delegates with direct member access, and emits source-location-to-test descriptors. Module initializers directly register these writers and descriptors. The runtime uses generic static writer slots; it does not discover methods, properties, attributes, assemblies, or runtime code.
+The incremental generator inspects semantic symbols and emits direct SnapshotWriter<T> delegates. It also emits source metadata for suite, method, display metadata, update attributes, source locations, and the project artifact root. Module initializers register the generated writers and metadata. Runtime code does not discover assemblies, methods, properties, attributes, or runtime-derived types.
 
-Ordinary source generators are additive. They do not rewrite user methods and this generator does not depend on a second generator consuming its output. The public wrapper is the portable lifecycle boundary rather than a fabricated universal test-runner hook.
+The generated build task derives a case discriminator from actual method arguments. Canonical argument JSON provides the stable hash; a bounded readable prefix makes the folder useful during review. The case folder identifies one parameterized invocation, while an AssertSnapshot name identifies one file inside that invocation. CancellationToken is excluded from the case key because it represents execution control rather than test data.
 
-Generated metadata uses call-site member source ranges to resolve the declaring method. Lines are lookup keys for this build, not persisted snapshot identity. A wrapper opened inside a shared helper needs an explicit caller identity. A helper that only captures should receive the active scope implicitly instead of opening another boundary.
+Source metadata uses the original file and method line range only to select the generated descriptor for a call. It is not persisted as snapshot identity. An explicit identity is required for linked source files outside the project or for a custom runner that cannot use the build integration.
 
 ## Formats and comparison
 
-Each named capture has one .json, .snap, or .txt file. Ambiguous existing formats for the same name fail. All can authorize changing one entry's extension. No mixed container grammar is needed.
+Each capture is one file: .json for structured JSON, .txt for plain text by default, or .snap when selected by configuration or an entry option. Existing files with more than one extension for the same capture name are rejected as ambiguous. JSON is canonicalized for deterministic output and compared structurally. Numeric tolerance uses bounded decimal arithmetic, and unordered arrays preserve duplicate counts through matching. Text comparison can normalize line endings, case, and trailing whitespace according to options.
 
-JSON output is canonical in key order and indentation. Arrays retain captured order. Comparison is structural and numeric equality does not first round through a double. Exact tolerance uses bounded BigInteger arithmetic. Unordered arrays use maximum bipartite matching to preserve multiplicities and avoid greedy errors with nontransitive tolerance.
+The static declared type is the serialization contract. Generated writers cover supported public contracts, and explicit typed writers cover private or specialized values. No reflective serializer or ToString fallback is used.
 
-There is no data filtering or transformation pipeline. Custom comparison is an equality contract on captured representations, not an object extraction framework. Different per-entry options never become defaults for subsequent captures.
+## Filesystem safety and transactions
 
-## Storage ownership and transactions
+The baseline path is:
 
-Readable suite/test folders do not fully encode project, method signature, case, or variant. A sidecar owner identifies the logical owner and prevents overlapping tests from sharing data silently. Portable case-insensitive collision checks apply on every OS. Safe filename segments are bounded and hash-suffixed when normalization changes them.
+    snapshotsFolder / relative source directory / suite / test [case] [variant] / capture.extension
 
-The storage layer checks paths for traversal and reparse/symlink nodes within its root. This is not a sandbox against malicious code racing filesystem path changes.
+Segments are normalized, bounded, reserved device names are escaped, and case-insensitive filename collisions are rejected. Paths are checked for traversal and reparse points. This protects ordinary repository use; it is not a guarantee against malicious code racing a filesystem path.
 
-Each transaction holds a local cross-process FileShare.None lock. It compares the current baseline fingerprint, stages before/after files, persists the previous owner and fingerprint, and flushes a prepared marker before mutating baselines. A committed marker records success. An interrupted prepared transaction restores its verified before set. Corrupt backups are preserved and rejected; read-only runs refuse recovery requiring writes.
+The store keeps locks, journals, and failure artifacts below the project artifacts directory, outside the reviewed baseline tree. A process takes a cross-process file lock, reads and fingerprints the current files, writes a before and after journal, flushes a prepared marker, applies the desired files, and records a committed marker. A later invocation recovers an interrupted prepared journal after verifying its backup fingerprint. Optimistic fingerprints prevent a second process from silently overwriting a baseline changed during the test.
 
-Individual file replacements are atomic to the extent provided by the host filesystem. The whole directory is not claimed to change in one atomic filesystem operation. Recovery covers ordinary process interruption and cooperative local workers, not arbitrary power loss, network filesystem semantics, host crashes with lost directory metadata, or hostile concurrent edits. In-memory snapshots and per-test size limits bound normal resource use.
+Individual files are replaced atomically where the host filesystem supports it. The whole directory is not changed by one atomic filesystem operation. Recovery covers cooperative local processes and ordinary interruption; distributed filesystems, arbitrary power loss, and hostile concurrent edits are outside the guarantee.
 
-Artifact output contains received/expected data and an execution manifest outside the baseline root. There is no CLI accept-from-received action: stale or incomplete received files cannot be blindly approved by the supplied tool. Global orphan pruning is also not implemented; filtered tests do not establish which suites have been deleted.
+## Configuration and packaging
 
-## Configuration
+Configuration is parsed with JsonDocument and strict property checks. Project configuration controls update policy, the baseline directory name, optional display-name preference, text extension, comparison defaults, limits, and the artifact directory. Environment overrides can enforce read-only or select a run policy for build systems, but no command-line tool is required.
 
-The compiler publishes project source metadata via package-provided props. Users do not edit project properties for update modes, baseline locations, or comparison choices. Runtime project settings are read manually from strict JSON using JsonDocument, not an object serializer with reflection defaults.
+The main NuGet package contains the .NET 10 runtime dependency, the compiler analyzer, and the MSBuild task payload under buildTransitive. The task is used at compile time and is not a runtime dependency. The runtime project is AOT-compatible and contains no reflection-based discovery. Build output and generated sources are redirected to ./artifacts by Directory.Build.props.
 
-Root locations resolve from explicit options/config, otherwise source-adjacent __snapshots__. Artifact locations resolve from the project root. IMPRINT_PROJECT_ROOT remaps a checkout for a deployed executable on the same path-syntax platform; explicit identity covers other host arrangements. No current-working-directory fallback creates accidental baseline trees.
+## Deliberate boundaries
 
-CI/read-only policy overrides everything. A run override can force verification over committed All attributes, or authorize a selected set while forcing nonmatches to verify.
-
-## Files and packages
-
-- src/TheLithium.Imprint.Core: runtime contracts, scope, static writer registry, encoding, comparison, settings, filesystem store.
-- src/TheLithium.Imprint: NuGet packaging, bundled generator, and automatic consumer build metadata.
-- src/TheLithium.Imprint.Generator: incremental generator and unsupported-type diagnostics, bundled in the main package.
-- src/TheLithium.Imprint.Tool: optional process wrapper and environment forwarding.
-- tests/TheLithium.Imprint.Specifications: explicitly registered executable specifications, including generator-dependent captures and Native AOT execution guard.
-- tests/TheLithium.Imprint.Tests: xUnit execution of the specification suite, checked-in snapshot examples, and process-level tool tests.
-- tests/TheLithium.Imprint.Generator.Tests: generated-source compilation, unsupported-type diagnostics, and naming metadata tests.
-- tests/TheLithium.Imprint.NUnit.Tests and tests/TheLithium.Imprint.MSTest.Tests: real framework integration and checked-in baselines.
-
-Normal development uses ProjectReference boundaries and standard dotnet build/test/pack commands. The main NuGet project packages its compiler-only generator with a dependency on the Core package. Tests can switch to the packed library with UsePackageReferences=true, verifying its bundled analyzer and transitive build metadata. No bootstrap scripts are required.
-
-## Scope exclusions
-
-No automatic runner adapters, live IDE acceptance UI, image/binary/directory snapshot feature, global orphan-pruning engine, snapshot redaction pipeline, runtime polymorphic member discovery, distributed writable baseline store, or claim of external framework AOT support is made. Users can snapshot a directory listing by preparing an ordinary DTO/array themselves.
+The library does not provide runner-specific adapters, a command-line updater, image or binary snapshot formats, global orphan pruning, a redaction pipeline, runtime polymorphic member discovery, or a distributed writable baseline store. These boundaries keep the ordinary test API small and the runtime suitable for Native AOT.
