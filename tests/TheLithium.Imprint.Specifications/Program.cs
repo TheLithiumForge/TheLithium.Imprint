@@ -36,6 +36,11 @@ internal static class Program
             Console.Error.WriteLine("Expected a Native AOT executable, but dynamic code is supported.");
             return 1;
         }
+        if (args.Contains("--expect-managed", StringComparer.Ordinal) && !RuntimeFeature.IsDynamicCodeSupported)
+        {
+            Console.Error.WriteLine("Expected a managed executable, but dynamic code is unavailable.");
+            return 1;
+        }
         var names = new[] { "IMPRINT_UPDATE", "IMPRINT_TEST", "IMPRINT_READ_ONLY", "IMPRINT_CONFIG",
             "IMPRINT_PROJECT_ROOT", "IMPRINT_ALLOW_CI_UPDATE", "CI" };
         var isolated = names.Select(name => new EnvironmentValue(name, null)).ToArray();

@@ -21,8 +21,39 @@ env:
   NUGET_XMLDOC_MODE: skip
 
 jobs:
-  build:
-    name: Build, test, package, and AOT (${{ matrix.os }})
+  managed:
+    name: Managed build and tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+          - os: ubuntu-latest
+          - os: macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Restore
+        run: dotnet restore TheLithium.Imprint.slnx --force-evaluate
+      - name: Build
+        run: dotnet build TheLithium.Imprint.slnx -c Release --no-restore
+      - name: Verify formatting
+        run: dotnet format TheLithium.Imprint.slnx whitespace --no-restore --verify-no-changes
+      - name: Run managed executable specifications
+        run: dotnet run --project tests/TheLithium.Imprint.Specifications -c Release --no-build --no-restore -- --expect-managed
+      - name: Test managed framework projects
+        run: dotnet test TheLithium.Imprint.slnx -c Release --no-build --no-restore --logger trx --results-directory artifacts/test-results
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: managed-validation-${{ matrix.os }}
+          path: artifacts/test-results
+
+  aot:
+    name: Packaged managed and Native AOT tests (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -44,22 +75,18 @@ jobs:
           global-json-file: global.json
       - name: Restore
         run: dotnet restore TheLithium.Imprint.slnx --force-evaluate
-      - name: Build
+      - name: Build package inputs
         run: dotnet build TheLithium.Imprint.slnx -c Release --no-restore
-      - name: Verify formatting
-        run: dotnet format TheLithium.Imprint.slnx whitespace --no-restore --verify-no-changes
-      - name: Test project references
-        run: dotnet test TheLithium.Imprint.slnx -c Release --no-build --no-restore --logger trx --results-directory artifacts/test-results
       - name: Pack local feed
         run: dotnet pack TheLithium.Imprint.slnx -c Release --no-build --no-restore
       - name: Restore package consumers
         run: dotnet restore TheLithium.Imprint.slnx -p:UsePackageReferences=true -p:RestorePackagesPath=artifacts/nuget/package-consumer --force-evaluate
-      - name: Test package consumers
+      - name: Test packaged managed consumers
         run: dotnet test TheLithium.Imprint.slnx -c Release -p:UsePackageReferences=true -p:RestorePackagesPath=artifacts/nuget/package-consumer --no-restore --logger trx --results-directory artifacts/package-test-results
-      - name: Run executable specifications
-        run: dotnet run --project tests/TheLithium.Imprint.Specifications -c Release -p:UsePackageReferences=true -p:RestorePackagesPath=artifacts/nuget/package-consumer --no-build --no-restore
+      - name: Run packaged managed specifications
+        run: dotnet run --project tests/TheLithium.Imprint.Specifications -c Release -p:UsePackageReferences=true -p:RestorePackagesPath=artifacts/nuget/package-consumer --no-build --no-restore -- --expect-managed
       - name: Publish package consumer as Native AOT
-        run: dotnet publish tests/TheLithium.Imprint.Specifications -c Release -r ${{ matrix.rid }} -p:UsePackageReferences=true -p:RestorePackagesPath=artifacts/nuget/package-consumer -p:PublishAot=true -p:SelfContained=true -o artifacts/native/${{ matrix.rid }}
+        run: dotnet publish tests/TheLithium.Imprint.Specifications -c Release -r ${{ matrix.rid }} -p:UsePackageReferences=true -p:RestorePackagesPath=artifacts/nuget/package-consumer -p:PublishAot=true -p:SelfContained=true -p:IlcTreatWarningsAsErrors=true -p:ILLinkTreatWarningsAsErrors=true -o artifacts/native/${{ matrix.rid }}
       - name: Run native specifications
         run: ./artifacts/native/${{ matrix.rid }}/${{ matrix.executable }} --expect-aot
       - uses: actions/upload-artifact@v4
