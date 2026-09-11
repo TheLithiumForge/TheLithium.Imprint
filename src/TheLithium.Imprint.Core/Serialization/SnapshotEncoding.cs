@@ -23,7 +23,7 @@ internal static class SnapshotEncoding
                 throw new SnapshotCaptureException("A text snapshot requires a non-null string. Format the value explicitly first.");
             }
 
-            EnsureSize(text, settings.MaxBytes);
+            EnsureSize(text, settings.MaxBytesPerSnapshot);
             return (text, format);
         }
         if (format != SnapshotFormat.Json)
@@ -34,18 +34,18 @@ internal static class SnapshotEncoding
         string json;
         if (value is string rawJson && writer is null)
         {
-            EnsureSize(rawJson, settings.MaxBytes);
+            EnsureSize(rawJson, settings.MaxBytesPerSnapshot);
             json = rawJson;
         }
         else
         {
-            using var stream = new SizeLimitedStream(settings.MaxBytes);
+            using var stream = new SizeLimitedStream(settings.MaxBytesPerSnapshot);
             using (var output = new Utf8JsonWriter(stream, new JsonWriterOptions
             {
                 Encoder = JavaScriptEncoder.Default
             }))
             {
-                var context = new SnapshotWriteContext(settings.MaxDepth, settings.MaxNodes, settings.Cancellation);
+                var context = new SnapshotWriteContext(settings.MaxNestingDepth, settings.MaxValuesPerSnapshot, settings.Cancellation);
                 if (writer is null)
                 {
                     SnapshotWriters.Write(output, value, context);
@@ -66,7 +66,7 @@ internal static class SnapshotEncoding
             }
             json = Utf8.GetString(stream.ToArray());
         }
-        return (CanonicalJson(json, settings.MaxDepth, settings.MaxBytes), SnapshotFormat.Json);
+        return (CanonicalJson(json, settings.MaxNestingDepth, settings.MaxBytesPerSnapshot), SnapshotFormat.Json);
     }
 
     internal static string CanonicalJson(string json, int maxDepth, int maxBytes)

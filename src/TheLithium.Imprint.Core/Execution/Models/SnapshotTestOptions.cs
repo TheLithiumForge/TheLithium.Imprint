@@ -60,18 +60,18 @@ public sealed record SnapshotTestOptions
     {
         get; init;
     }
-    /// <summary>Maximum serialization depth, from 1 through 256.</summary>
-    public int? MaxDepth
+    /// <summary>Deepest object or array nesting that will be serialized, from 1 through 256.</summary>
+    public int? MaxNestingDepth
     {
         get; init;
     }
-    /// <summary>Maximum visited values, from 1 through 10,000,000.</summary>
-    public int? MaxNodes
+    /// <summary>Most values one capture may visit, from 1 through 10,000,000.</summary>
+    public int? MaxValuesPerSnapshot
     {
         get; init;
     }
-    /// <summary>Maximum UTF-8 bytes per snapshot, from 1 through 256 MiB.</summary>
-    public int? MaxBytes
+    /// <summary>Largest single snapshot file in UTF-8 bytes, from 1 through 256 MiB.</summary>
+    public int? MaxBytesPerSnapshot
     {
         get; init;
     }

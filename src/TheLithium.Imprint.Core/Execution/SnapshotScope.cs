@@ -97,7 +97,7 @@ public sealed class SnapshotScope : IDisposable
                 var name = ResolveName(explicitName, expression);
                 var encoded = SnapshotEncoding.Encode(value, options.Format, writer, _settings);
                 _bytes += SnapshotEncoding.Utf8.GetByteCount(encoded.Text);
-                if (_bytes > Math.Max(_settings.MaxBytes, SnapshotLimits.TestBytes))
+                if (_bytes > Math.Max(_settings.MaxBytesPerSnapshot, SnapshotLimits.TestBytes))
                 {
                     throw new SnapshotCaptureException("The captured test set exceeds its total size budget.");
                 }

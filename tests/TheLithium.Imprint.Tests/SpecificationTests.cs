@@ -13,8 +13,7 @@ public sealed class SpecificationTests
     [MemberData(nameof(Cases))]
     public async Task Specification(string name)
     {
-        var variables = new[] { "IMPRINT_UPDATE", "IMPRINT_TEST", "IMPRINT_READ_ONLY", "IMPRINT_CONFIG",
-            "IMPRINT_PROJECT_ROOT", "IMPRINT_ALLOW_CI_UPDATE", "CI" };
+        var variables = new[] { "IMPRINT_UPDATE", "IMPRINT_PROJECT_ROOT", "CI" };
         var saved = variables.Select(variable => new EnvironmentValue(variable, null)).ToArray();
         try
         {

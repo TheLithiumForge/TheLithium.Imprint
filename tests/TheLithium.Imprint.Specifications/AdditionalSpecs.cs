@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using TheLithium.Imprint.Generation;
 
 namespace TheLithium.Imprint.Specifications;
 
@@ -7,6 +8,8 @@ public static partial class Specs
 {
     private static (string Name, Func<Task> Run)[] Additional =>
     [
+        (nameof(ReadableCaseKeysOmitTheHash), Check.Sync(ReadableCaseKeysOmitTheHash)),
+        (nameof(AmbiguousCaseKeysKeepTheHash), Check.Sync(AmbiguousCaseKeysKeepTheHash)),
         (nameof(TextDiffIncludesContext), Check.Sync(TextDiffIncludesContext)),
         (nameof(JsonDiffIncludesPathAndValues), Check.Sync(JsonDiffIncludesPathAndValues)),
         (nameof(DiffSeparatesDistantChanges), Check.Sync(DiffSeparatesDistantChanges)),
@@ -38,6 +41,38 @@ public static partial class Specs
         Check.Throws<ArgumentNullException>(() => new SnapshotEntryResult(null!, "value.json", SnapshotStatus.Matched));
         Check.Throws<ArgumentNullException>(() => new SnapshotReport("Suite.Test", true, null!));
         Check.Throws<ArgumentNullException>(() => new SnapshotException(null!));
+    }
+
+    private static void ReadableCaseKeysOmitTheHash()
+    {
+        // A label that already names every argument is the whole identity. Committed snapshot
+        // paths stay shorter without a suffix that distinguishes nothing.
+        Check.Equal("count=1, label=first", SnapshotCases.Create(new { count = 1, label = "first" }));
+        Check.Equal("enabled=true, ratio=0.5", SnapshotCases.Create(new { enabled = true, ratio = 0.5 }));
+    }
+
+    private static void AmbiguousCaseKeysKeepTheHash()
+    {
+        // A string that reads as a literal, an embedded separator, or a truncated label can all
+        // let two different rows render the same text, so those keep their hash.
+        var numeric = SnapshotCases.Create(new { value = "1" });
+        var separator = SnapshotCases.Create(new { value = "a, b=c" });
+        var nested = SnapshotCases.Create(new { value = new { inner = 1 } });
+        var truncated = SnapshotCases.Create(new { value = new string('x', 80) });
+        foreach (var key in new[] { numeric, separator, nested, truncated })
+        {
+            Check.True(key.Contains('~'), "An ambiguous case label must keep its hash: " + key);
+        }
+
+        // The hash must actually separate two rows that render identically.
+        Check.True(SnapshotCases.Create(new
+        {
+            value = "1"
+        }) != SnapshotCases.Create(new
+        {
+            value = 1
+        }),
+            "A string and a number rendering the same text must not share a case folder.");
     }
 
     private static void TextDiffIncludesContext()

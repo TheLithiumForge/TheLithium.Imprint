@@ -1,249 +1,561 @@
 # TheLithium.Imprint
 
 [![Build and test](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml/badge.svg)](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml)
-[![xUnit](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml/badge.svg?job=xunit)](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml)
-[![NUnit](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml/badge.svg?job=nunit)](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml)
-[![MSTest](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml/badge.svg?job=mstest)](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml)
-[![Native AOT](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml/badge.svg?job=aot)](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml)
 [![NuGet](https://img.shields.io/nuget/vpre/TheLithium.Imprint?logo=nuget&label=NuGet)](https://www.nuget.org/packages/TheLithium.Imprint)
 [![.NET 10](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/download/dotnet/10.0)
 
-TheLithium.Imprint is a snapshot testing library for .NET 10. It keeps the normal test flow, works with xUnit, NUnit, MSTest, and other runners that report uncaught .NET exceptions, and supports Native AOT through compile-time source generation.
+Native AOT, Snapshot testing library for .NET 10 and later. Add `.AssertSnapshot()` to a value in a test you already have.
 
-It is designed around one small idea: compute a value in the test you already have, then assert it where it is meaningful. There is no callback runner to learn and no separate command required for ordinary updates.
+```csharp
+[Fact]
+public async Task CreatesAnOrder()
+{
+    var order = await CreateOrderAsync();
 
-**What it gives you**
+    order.AssertSnapshot();          // writes __snapshots__/OrderTests/CreatesAnOrder/order.json
 
-- **Normal test bodies.** Call `AssertSnapshot()` or `UpdateSnapshot()` beside your existing assertions.
-- **Safe first runs.** A missing snapshot passes by default and is written only after the test succeeds.
-- **Stable identities.** Suite, method, display name, parameterized case, variant, and capture name are kept separate.
-- **Useful failures.** JSON member paths, bounded unified diffs, and expected/received artifacts are available on mismatch.
-- **AOT-friendly output.** Serialization is generated at compile time from declared types; the runtime does not discover members through reflection.
-- **One package.** The main package carries the Core runtime, analyzer, and MSBuild integration. A Core-only package is available for custom hosts.
+    Assert.NotEmpty(order.Items);    // your normal assertions still work
+}
+```
+
+The first run writes the file and passes. Every later run compares against it and fails if it changed.
+
+Works with xUnit, NUnit, MSTest, and anything else that fails a test on an uncaught exception. Serializes without reflection, so it runs under Native AOT.
+
+## Contents
+
+- [Install](#install)
+- [Quick start](#quick-start)
+- [The one rule](#the-one-rule)
+- [Updating snapshots](#updating-snapshots)
+- [API](#api)
+- [Configuration](#configuration)
+- [Editor support](#editor-support)
+- [What can be captured](#what-can-be-captured)
+- [When a test fails](#when-a-test-fails)
+- [Volatile data (timestamps, GUIDs)](#volatile-data-timestamps-guids)
+- [Where files go](#where-files-go)
+- [Parameterized tests](#parameterized-tests)
+- [Native AOT](#native-aot)
+- [Custom runners](#custom-runners)
+- [More](#more)
+
+## Install
+
+```text
+dotnet add package TheLithium.Imprint --version 0.1.0-preview.2
+```
+
+That is the whole setup. No base class, no fixture, no `[UsesVerify]`, no CLI tool.
+
+The package contains the runtime, a source generator, and an MSBuild task. Only the runtime ships into your test binary; the other two run at compile time.
+
+> `TheLithium.Imprint.Core` is also published on its own. You only need it if you are writing a custom test runner — see [Custom runners](#custom-runners).
 
 ## Quick start
 
-~~~csharp
+```csharp
 using TheLithium.Imprint;
 using Xunit;
 
 public sealed class OrderTests
 {
     [Fact]
-    public async Task CreatesOrder()
+    public void CreatesAnOrder()
     {
-        var order = await CreateOrderAsync();
+        var order = new Order("order-123", 42.50m, ["Keyboard", "Cable"]);
 
         order.AssertSnapshot();
-        order.Items.AssertSnapshot("items");
-        "Ready for dispatch".AssertSnapshot("status");
-
-        Assert.NotEmpty(order.Items);
     }
 }
-~~~
+```
 
-There is no callback wrapper in the normal API. The package adds the snapshot lifetime to the compiled test method, so captures can be placed beside ordinary assertions and application code.
+Run the test. It passes, and this file appears next to your test source:
 
-## Install
+```text
+__snapshots__/OrderTests/CreatesAnOrder/order.json
+```
 
-Add the package to the test project:
+```json
+{
+    "Id": "order-123",
+    "Items": ["Keyboard", "Cable"],
+    "Total": 42.5
+}
+```
 
-~~~text
-dotnet add package TheLithium.Imprint --version 0.1.0-preview.1
-~~~
+Commit that file. It is now the baseline — review it in pull requests like any other code.
 
-~~~xml
-<PackageReference Include="TheLithium.Imprint" Version="0.1.0-preview.1" />
-~~~
+Change `42.50m` to `43.50m` and the test fails with a diff. Either the change is a bug, or it is intended and you [update the snapshot](#updating-snapshots).
 
-The package brings the .NET 10 runtime through its TheLithium.Imprint.Core dependency, plus the source generator and build integration that supply test identity and method lifetimes. The compiler-only components are not runtime dependencies. A project using only TheLithium.Imprint.Core can provide its own identity and lifetime through Snapshots.Begin.
+Capture as many values as you like. Give each one a name:
 
-The package targets `net10.0`. The repository build uses the SDK selected by [global.json](global.json); applications only need the .NET 10 SDK that matches their normal build policy.
+```csharp
+[Fact]
+public void CreatesAnOrder()
+{
+    var order = CreateOrder();
 
-## CI coverage
+    order.AssertSnapshot("order");                 // order.json
+    order.Items.AssertSnapshot("items");           // items.json
+    "Ready for dispatch".AssertSnapshot("status"); // status.txt  (strings are stored as text)
+}
+```
 
-The [GitHub Actions build matrix](.github/workflows/build-test.yml) runs on Windows, Ubuntu, and macOS. It has two explicit lanes so the runtime mode is visible in every run:
+Without a name, the variable name is used (`order.AssertSnapshot()` → `order.json`). Name them explicitly once you have more than one.
 
-- **Managed lane:** builds the solution, verifies formatting, runs the xUnit, NUnit, and MSTest projects, and runs the executable specifications with `--expect-managed`.
-- **Packaged AOT lane:** packs both NuGet projects, restores the test projects from that local package feed, runs the packaged tests in managed mode, publishes `tests/TheLithium.Imprint.Specifications` as Native AOT for the platform, and runs the resulting executable with `--expect-aot`.
+## The one rule
 
-The framework adapters remain managed test hosts, which is how their runners are designed to work. The executable specification project is the AOT test project: it exercises the same Core runtime and generated package integration without requiring a reflection-heavy test adapter. The separate framework jobs make each badge above independently meaningful.
+**Snapshots are written only after the test method returns successfully.**
 
-| Surface | Project | Runtime mode |
-| --- | --- | --- |
-| xUnit integration and generator tests | `tests/TheLithium.Imprint.Tests` and `tests/TheLithium.Imprint.Generator.Tests` | Managed |
-| NUnit integration | `tests/TheLithium.Imprint.NUnit.Tests` | Managed |
-| MSTest integration | `tests/TheLithium.Imprint.MSTest.Tests` | Managed |
-| End-to-end Core and package specifications | `tests/TheLithium.Imprint.Specifications` | Managed and Native AOT |
+Captures are serialized the moment you call `AssertSnapshot`, held in memory, and compared as a set when the method finishes. If anything throws — your assertion, the code under test, an awaited `finally` block — nothing is written and the baseline is untouched.
 
-## Assert and update
-
-AssertSnapshot captures immediately and compares the complete set after the test method returns successfully. Under the default Missing policy, a missing file is created and the test passes; Verify still requires every baseline. An existing difference produces a structured failure with an inline diff. Every capture in a method is considered together, so a later exception prevents all staged writes.
-
-The method body includes awaited work and finally blocks that are part of that method:
-
-~~~csharp
+```csharp
 [Fact]
 public async Task ReadsState()
 {
     var before = await ReadAsync();
-    before.AssertSnapshot("before");
+    before.AssertSnapshot("before");   // captured here, written at the end
 
     try
     {
-        await MutateAsync();
+        await MutateAsync();           // if this throws,
     }
     finally
     {
-        await RestoreAsync();
+        await RestoreAsync();          // or this does,
     }
-}
-~~~
+}                                      // "before" is never written
+```
 
-Use UpdateSnapshot when one capture should be replaced after the method succeeds:
+Two consequences worth knowing:
 
-~~~csharp
-var response = await SendAsync();
+- A failing test never leaves a half-approved snapshot behind.
+- Teardown that runs _outside_ the method — an xUnit `IAsyncLifetime.DisposeAsync`, an NUnit `[TearDown]`, an MSTest `[TestCleanup]` — happens after the boundary and cannot stop an approval. [Worked example](#teardown-outside-the-method-cannot-affect-approval).
+
+## Updating snapshots
+
+You have changed the code on purpose and the new output is correct. Pick whichever fits:
+
+**One test run, from the command line** — nothing to edit, nothing to undo:
+
+```bash
+IMPRINT_UPDATE=all dotnet test
+```
+
+Narrow it with your runner's own filter. A test that does not run cannot be updated:
+
+```bash
+IMPRINT_UPDATE=all dotnet test --filter 'FullyQualifiedName~OrderTests'
+```
+
+**One capture, in code** — change `AssertSnapshot` to `UpdateSnapshot`, run, change it back:
+
+```csharp
 response.UpdateSnapshot("response");
-~~~
+```
 
-For a complete method or suite, use an attribute while reviewing the resulting files:
+**One test or class, in code** — while you are iterating on it:
 
-~~~csharp
+```csharp
 [SnapshotSettings(Update = SnapshotUpdate.All)]
-public sealed class ContractTests
-{
-    [Fact]
-    public void CurrentContract()
-    {
-        GetContract().AssertSnapshot("contract");
-    }
-}
-~~~
+public sealed class ContractTests { /* ... */ }
+```
 
-SnapshotSettings with Update = All can be placed on one method or its class. The project setting "update": "all" updates every test in that project. Change the setting back to "missing" after reviewing the files. Updates are staged and committed only after the method succeeds; a failed test never leaves a partial approval behind.
+**Everything in the project** — set `"update": "all"` in `snapshots.config.json`. Set it back to `"missing"` when you are done.
 
-UpdateSnapshot does not remove files that the method no longer captures. Whole-test All does remove unused files after successful completion. Read-only and CI policies can still forbid every write.
+### The update policies
 
-When a temporary review run needs a narrower update, set `IMPRINT_UPDATE=all` and optionally set `IMPRINT_TEST` to a glob. With the default method names, a selector such as `Orders.Create*` updates one method and its parameterized invocations; a suite selector such as `Orders.*` updates the suite; omit `IMPRINT_TEST` to update the whole project. With `preferDisplayNames` or `SnapshotSettings(Name = "...")`, select the resulting suite/test name shown in failure output. A nonmatching selector verifies every test, so a typo cannot approve snapshots accidentally. These are environment settings consumed by the normal `dotnet test` command; there is no separate Imprint CLI.
+| Policy                | Missing snapshot | Changed snapshot | Snapshot no longer captured |
+| --------------------- | ---------------- | ---------------- | --------------------------- |
+| `verify`              | fail             | fail             | fail                        |
+| `missing` _(default)_ | **create, pass** | fail             | fail                        |
+| `all`                 | create           | overwrite        | delete                      |
 
-`IMPRINT_UPDATE=verify` and `IMPRINT_READ_ONLY=true` force verification. Continuous integration also verifies by default; opt into a deliberate CI update only with `IMPRINT_ALLOW_CI_UPDATE=true` and an update policy. `IMPRINT_CONFIG` selects another configuration file and `IMPRINT_PROJECT_ROOT` remaps a relocated checkout.
+`all` deletes unused files only when it applies to a whole test (an attribute, the config file, or `IMPRINT_UPDATE`). A single `UpdateSnapshot()` call never deletes anything.
 
-## Names, files, and parameterized tests
+A run-wide `verify` — `IMPRINT_UPDATE=verify`, or CI — means nothing on disk changes at all. An interrupted commit from an earlier run is reported rather than rolled back, so a verification run never modifies your working tree.
 
-The default test folder is the C# method name. The suite is the containing type. SnapshotSettings(Name = "...") supplies an explicit suite or test name. A project can opt into a framework display name or description with "preferDisplayNames": true; the method name remains the fallback when no constant display metadata exists.
+### CI verifies by default
 
-Parameterized tests are isolated automatically. The build integration derives a deterministic case discriminator from the actual method arguments, so InlineData, TestCase, DataRow, and similar data rows receive separate folders without any wrapper code:
+When `CI=true` is set — every major CI provider sets it — the policy becomes `verify`, whatever the config file says. A missing snapshot fails the build instead of being quietly created.
 
-~~~csharp
-[Theory]
-[InlineData("first", 1)]
-[InlineData("second", 2)]
-public void Parses(string caseId, int count)
-{
-    var result = Parse(caseId, count);
-    result.AssertSnapshot("result");
-}
-~~~
+To update from CI on purpose, set `IMPRINT_UPDATE` for that run. An explicit request for one run beats the default; a committed `"update": "all"` never does.
 
-The files are scoped as follows:
+### The two environment variables
 
-~~~text
-__snapshots__/
-  <relative test source directory>/
-    <suite>/
-      <test> [<case>] [<variant>]/
-        result.json
-~~~
+Almost everything is configured through the typed API — `[SnapshotSettings]`, `SnapshotOptions`, and `snapshots.config.json`. Two things cannot be, so they are read from the environment:
 
-Case values are serialized canonically into a readable prefix plus a short hash suffix, keeping each invocation deterministic and collision-resistant. Keep data-row arguments deterministic and within the static type support contract; an opaque row value needs an explicit custom runner case key. The case folder is the invocation identity; the capture name is the file identity. If one invocation has several logical outputs, give them stable names such as result, headers, and diagnostics. A loop over runtime data still belongs to one invocation, so include a stable id in each capture name, for example `item.AssertSnapshot($"result-{item.Id}")`.
+| Variable               | Why it is not a typed setting                                                                                                                                                                                                                                                                        |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `IMPRINT_UPDATE`       | `verify`, `missing`, or `all` for one run. Approving a change must not require editing and then reverting a committed file — forgetting to revert `"update": "all"` silently disables your whole suite. Imprint has no runner adapter, so no command-line flag or `.runsettings` value can reach it. |
+| `IMPRINT_PROJECT_ROOT` | The project path is baked in at compile time. This repoints it when the tests run somewhere else than they were built — building in one container and testing in another, for example. It describes the environment, not a policy.                                                                   |
 
-Use SnapshotTestOptions.Case only for a custom runner integration or when the runner cannot be compiled with the package build integration. A Variant is an explicit additional discriminator for intentionally different baselines, such as a documented target configuration.
+`CI` is also read, but it is set by your CI provider, not by you.
 
-Capture names are inferred from simple expressions when possible (result.AssertSnapshot() writes result.json). Explicit names are recommended for multiple captures of the same expression. Names are portable, bounded, and checked case-insensitively.
+Both are read by the normal `dotnet test`. There is no separate Imprint command.
 
-## Failure output
+## API
 
-Failures aggregate every missing, changed, and unused entry. JSON comparisons report member paths and include a compact unified diff:
+Four methods cover almost everything:
 
-~~~diff
---- expected
-+++ received
-@@ -1,5 +1,5 @@
-  {
-    "Customer": {
--     "Name": "Alice"
-+     "Name": "Bob"
-    }
-  }
-~~~
+```csharp
+value.AssertSnapshot();                          // compare against the baseline
+value.AssertSnapshot("name");                    // ...into name.json
+value.AssertSnapshot("name", options);           // ...with per-capture options
+value.UpdateSnapshot("name");                    // overwrite this one baseline
+```
 
-Large values are abbreviated in the exception. Full expected, received, and run-manifest files are written beneath artifacts/imprint/failures (or the configured artifact directory), and SnapshotMismatchException.Report exposes the structured results.
+`AssertSnapshot` and `UpdateSnapshot` both take an optional explicit writer — see [What can be captured](#what-can-be-captured).
 
-## Formats and comparison
+### Per-capture options — `SnapshotOptions`
 
-Structured values are written as canonical, indented JSON in .json files. Plain strings use text format and .txt by default. SnapshotFormat.Snap is available when a project needs the legacy .snap extension. A string can be parsed and compared as JSON explicitly:
-
-~~~csharp
+```csharp
 payload.AssertSnapshot("payload", new SnapshotOptions
 {
-    Format = SnapshotFormat.Json,
-    Comparison = new SnapshotComparison
-    {
-        NumericTolerance = 0.001m,
-        IgnoreArrayOrder = true
-    }
+    Format     = SnapshotFormat.Json,   // parse this string as JSON instead of storing it as text
+    Comparison = new SnapshotComparison { NumericTolerance = 0.001m },
+    Comparer   = new MyComparer(),      // full control over equality
+    Update     = SnapshotUpdate.All     // policy for this capture only
 });
-~~~
+```
 
-Text comparison can ignore line-ending differences, case, or trailing whitespace. JSON comparison is structural, preserves duplicate array values, and supports bounded numeric tolerance and unordered arrays. ISnapshotComparer supplies a custom equality rule for one capture. Equality settings affect comparison only; the saved representation stays deterministic.
+| Property     | Meaning                                                                                                                                                     |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Format`     | `Auto` (default): text for strings, JSON for everything else. `Json` parses a string as JSON. `Text` / `Snap` force text with a `.txt` / `.snap` extension. |
+| `Comparison` | Equality rules for this capture. Replaces the project rules wholesale.                                                                                      |
+| `Comparer`   | Your own `ISnapshotComparer`. See [Volatile data](#volatile-data-timestamps-guids).                                                                         |
+| `Update`     | Update policy for this capture only.                                                                                                                        |
 
-The static declared type is the serialization contract. Records, DTOs, anonymous projections, tuples, nullable values, enums, collections, dictionaries, and multidimensional arrays are supported. Runtime-derived members of an object or base-typed value are not discovered. Private or specialized contracts can use an explicit typed writer:
+### Equality rules
 
-~~~csharp
+These decide when two snapshots count as equal. **They never change what is written to disk** — the stored file is always the exact captured value.
+
+| Property                   | Default | Meaning                                                                                      |
+| -------------------------- | ------- | -------------------------------------------------------------------------------------------- |
+| `IgnoreLineEndings`        | `true`  | Treat CRLF and LF as equal. Keep this on for cross-platform repos.                           |
+| `NumericTolerance`         | `0`     | Largest accepted absolute difference between two JSON numbers. For floats.                   |
+| `IgnoreArrayOrder`         | `false` | Match array elements in any order. Duplicates still have to appear the same number of times. |
+| `IgnoreTrailingWhitespace` | `false` | Ignore spaces and tabs at the end of each line.                                              |
+| `IgnoreStringCase`         | `false` | Compare string _values_ case-insensitively. Property names stay case-sensitive.              |
+| `MaxUnorderedArrayLength`  | `256`   | Longest array `IgnoreArrayOrder` will try to match, to bound the cost.                       |
+
+`IgnoreArrayOrder` uses real multiset matching, not a greedy pass, so it stays correct when combined with `NumericTolerance`.
+
+### Per-test settings — `[SnapshotSettings]`
+
+On a method or a class. A method wins over its class.
+
+```csharp
+[SnapshotSettings(Update = SnapshotUpdate.All, Name = "Contract")]
+```
+
+| Property | Meaning                                                                                          |
+| -------- | ------------------------------------------------------------------------------------------------ |
+| `Update` | Update policy for this test or every test in the class.                                          |
+| `Name`   | Folder name — the test folder on a method, the suite folder on a class. Defaults to the C# name. |
+
+### Reading the result
+
+A mismatch throws `SnapshotMismatchException`, which carries a structured `Report`:
+
+```csharp
+catch (SnapshotMismatchException e)
+{
+    foreach (var entry in e.Report.Entries)
+    {
+        // entry.Name, entry.FileName, entry.Status, entry.Difference
+    }
+}
+```
+
+`SnapshotStatus` is one of `Matched`, `Missing`, `Changed`, `Unused` (failures), or `Created`, `Updated`, `Removed` (approvals).
+
+All exceptions derive from `SnapshotException`: `SnapshotMismatchException` (a snapshot differs), `SnapshotCaptureException` (serialization failed), `SnapshotConfigurationException` (bad config or no active test), `SnapshotConflictException` (another process changed the baseline mid-test).
+
+## Configuration
+
+Optional. Drop a `snapshots.config.json` in the test-project root. Every key has a default, so only write the ones you are changing.
+
+```json
+{
+    "$schema": "https://raw.githubusercontent.com/TheLithium/TheLithium.Imprint/main/snapshots.schema.json",
+    "version": 1,
+
+    "update": "missing",
+
+    "comparison": {
+        "ignoreTrailingWhitespace": true
+    }
+}
+```
+
+That `$schema` line gives you completion and inline documentation in VS Code, Visual Studio, and Rider — see [Editor support](#editor-support).
+
+The full shape, with defaults:
+
+```json
+{
+    "version": 1,
+
+    "update": "missing",
+    "allowEmptyTests": false,
+
+    "files": {
+        "snapshotFolderName": "__snapshots__",
+        "snapshotRootPath": null,
+        "failureArtifactPath": "artifacts/imprint/failures",
+        "textFileExtension": "txt"
+    },
+
+    "naming": {
+        "unnamedCaptures": "name-then-order",
+        "useFrameworkDisplayNames": false
+    },
+
+    "comparison": {
+        "numericTolerance": 0,
+        "ignoreArrayOrder": false,
+        "ignoreStringCase": false,
+        "ignoreLineEndings": true,
+        "ignoreTrailingWhitespace": false,
+        "maxUnorderedArrayLength": 256
+    },
+
+    "limits": {
+        "maxNestingDepth": 64,
+        "maxValuesPerSnapshot": 100000,
+        "maxBytesPerSnapshot": 4194304,
+        "lockTimeoutSeconds": 10
+    }
+}
+```
+
+**Top level** — the two policies you are most likely to change.
+
+| Key               | Meaning                                                                       |
+| ----------------- | ----------------------------------------------------------------------------- |
+| `update`          | `verify`, `missing`, or `all`. See [the table above](#the-update-policies).   |
+| `allowEmptyTests` | Let a test that captures nothing pass instead of failing as a likely mistake. |
+
+**`files`** — where things are written.
+
+| Key                   | Meaning                                                                                                    |
+| --------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `snapshotFolderName`  | Folder created next to your test sources to hold the snapshots.                                            |
+| `snapshotRootPath`    | Put snapshots somewhere else entirely. Project-relative or absolute. Replaces the source-adjacent default. |
+| `failureArtifactPath` | Where expected/received files go when a test fails. Must be outside the snapshot root.                     |
+| `textFileExtension`   | `txt` or `snap`, for text snapshots.                                                                       |
+
+**`naming`** — how folders and files get their names.
+
+| Key                        | Meaning                                                                                                                                                                            |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `unnamedCaptures`          | Filename when a capture has no explicit name. `name-then-order` (variable name, else `snapshot-1`), `order` (always `snapshot-1`), or `explicit-only` (require a name every time). |
+| `useFrameworkDisplayNames` | Name the test folder after `[Fact(DisplayName = "...")]` instead of the method name, when one exists.                                                                              |
+
+**`comparison`** — the same six rules as [`SnapshotComparison`](#equality-rules).
+
+**`limits`** — safety valves. Raise one only when a legitimate snapshot hits it.
+
+| Key                    | Meaning                                                                   |
+| ---------------------- | ------------------------------------------------------------------------- |
+| `maxNestingDepth`      | Deepest object or array nesting that will be serialized.                  |
+| `maxValuesPerSnapshot` | Most values one capture may visit. Catches runaway graphs.                |
+| `maxBytesPerSnapshot`  | Largest single snapshot file, in UTF-8 bytes.                             |
+| `lockTimeoutSeconds`   | How long to wait for another process to release the snapshot folder lock. |
+
+Unknown keys, duplicate keys, and wrong types are errors, not warnings — a typo will not be silently ignored, and a key that moved or was renamed tells you its new spelling:
+
+```text
+Unknown configuration property: maxNodes. It is now "limits.maxValuesPerSnapshot".
+```
+
+### Editor support
+
+The keys above are described by [`snapshots.schema.json`](snapshots.schema.json), which ships inside the NuGet package and is published in this repository. A test keeps it in step with the reader, so it can never document a key that does not work or miss one that does.
+
+To get completion and hover documentation, point your config at it:
+
+| How                               | Setup                                                                                                                                   | Works offline                         |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| **`$schema` URL** _(recommended)_ | Add the `$schema` line shown above.                                                                                                     | No — fetched and cached by the editor |
+| **`$schema` relative path**       | Copy `snapshots.schema.json` out of the package into your repo, then `"$schema": "./snapshots.schema.json"`.                            | Yes                                   |
+| **VS Code workspace setting**     | Map the filename in `.vscode/settings.json` under `json.schemas`. Commit it, and everyone on the repo gets it without a `$schema` line. | With a local copy                     |
+
+A fourth option needs no setup at all: registering the schema with [SchemaStore](https://www.schemastore.org), whose catalog ships inside VS Code and Rider. Once `snapshots.config.json` is in that catalog, the filename alone is enough — no `$schema` line, nothing to configure. That is a pull request to the SchemaStore repository rather than a code change here, and the schema already carries the `$id` it needs.
+
+## What can be captured
+
+**The declared type of the expression is the contract.** The source generator reads that type at compile time and emits a direct serializer for it. Nothing is discovered by reflection at runtime, which is what makes Native AOT work.
+
+Out of the box: records, classes and structs with public members, anonymous types, tuples, enums, nullables, collections, dictionaries, arrays (rank 1–3), and the usual primitives — `string`, numbers, `Guid`, `DateTime`, `TimeSpan`, `Uri`, `JsonElement`, and friends.
+
+Because the _declared_ type is the contract, this matters:
+
+```csharp
+Animal pet = new Dog { Name = "Rex", GoodBoy = true };
+pet.AssertSnapshot();   // captures Animal.Name — NOT Dog.GoodBoy
+```
+
+Runtime subtypes are not discovered. If you want the derived members, declare the variable as `Dog`.
+
+For a private type, a third-party type, or a deliberate projection, pass a writer:
+
+```csharp
 value.AssertSnapshot(
     static (json, item, context) =>
     {
         json.WriteStartObject();
-        json.WriteNumber("code", item.Code);
-        json.WriteString("message", item.Message);
+        json.WriteString("id", item.Id);
+        json.WriteNumber("itemCount", item.Items.Length);
         json.WriteEndObject();
     },
-    "custom");
-~~~
+    "projection");
+```
 
-SnapshotInclude<MyType> roots a generated writer for a type used only through a generic helper. No reflective serializer or ToString fallback is used.
+If the generator cannot build a writer for a type it sees, it reports **IMP001** at compile time with the reason — not a runtime surprise. For a type reached only through a generic helper, root it with `[assembly: SnapshotInclude<MyType>]`.
 
-## Configuration
+Full details in [docs/TYPE-SUPPORT.md](docs/TYPE-SUPPORT.md).
 
-Place an optional snapshots.config.json in the test-project root. Unknown and duplicate properties fail with an actionable configuration error.
+## When a test fails
 
-~~~json
-{
-  "$schema": "../snapshots.schema.json",
-  "version": 1,
-  "update": "missing",
-  "directoryName": "__snapshots__",
-  "preferDisplayNames": false,
-  "textExtension": "txt",
-  "naming": "name-then-order",
-  "comparison": {
-    "ignoreLineEndings": true,
-    "ignoreTrailingWhitespace": false
+```text
+TheLithium.Imprint.SnapshotMismatchException : Snapshot mismatch: OrderTests.CreatesAnOrder
+
+order.json: Changed
+  $["Items"][1]: expected "Cable", received "Cord".
+--- expected
++++ received
+@@ -2,8 +2,8 @@
+    "Id": "order-123",
+    "Items": [
+      "Keyboard",
+-     "Cable"
++     "Cord"
+    ],
+-   "Total": 42.50
++   "Total": 43.50
   }
+
+Received files: .../artifacts/imprint/failures/<run>/OrderTests/CreatesAnOrder/<id>
+
+Review the differences, then authorize updates with a method/class attribute,
+UpdateSnapshot(), or the update setting in snapshots.config.json.
+```
+
+All entries of a test are reported together, so you see every difference in one run rather than one per fix.
+
+Large values are abbreviated in the message. The full expected and received files are written to the artifact directory so you can diff them with your own tools.
+
+## Volatile data (timestamps, GUIDs)
+
+A payload with a timestamp in it changes every run. Imprint has no scrubbing or redaction pipeline; the way to handle this is an `ISnapshotComparer`, which decides equality for one capture:
+
+```csharp
+public sealed class IgnoreTimestamps : ISnapshotComparer
+{
+    private static string Scrub(string text) =>
+        Regex.Replace(text, @"\d{4}-\d{2}-\d{2}T[\d:.]+Z", "<timestamp>");
+
+    public SnapshotComparisonResult Compare(
+        string expected, string received, SnapshotFormat format, SnapshotComparison options)
+        => Scrub(expected) == Scrub(received)
+            ? SnapshotComparisonResult.Match
+            : new SnapshotComparisonResult(false, "Differs after ignoring timestamps.");
 }
-~~~
 
-update accepts missing, verify, or all. The default is missing, which creates a missing baseline and fails on changes. directoryName controls the root folder name; rootDirectory can choose a project-relative or absolute root. artifactDirectory is for failure artifacts and must remain outside the baseline root. See snapshots.schema.json and the example for all limits and comparison options.
+// then:
+payload.AssertSnapshot("payload", new SnapshotOptions { Comparer = new IgnoreTimestamps() });
+```
 
-The precedence for update policy is read-only/CI enforcement, an explicit run policy, capture options, test attributes, class attributes, project configuration, and finally the default. Paths are derived from source metadata and do not depend on the process working directory.
+The stored file keeps the real timestamp; only the comparison ignores it.
 
-## Custom runner integration
+The alternative — often the better one — is to not capture the volatile field at all, by projecting the value first or using an explicit writer.
 
-Most users do not need this API. A runner or host that cannot use the package build integration can provide an explicit identity:
+## Where files go
 
-~~~csharp
+```text
+__snapshots__/
+  <directory of the test source file, relative to the project>/
+    <suite>/
+      <test> [<case>] [<variant>]/
+        <capture>.json
+```
+
+- **suite** — the containing class, or `[SnapshotSettings(Name = "...")]` on the class.
+- **test** — the method, or `Name` on the method, or the framework display name if `naming.useFrameworkDisplayNames` is on.
+- **case** — one row of a parameterized test. Added automatically.
+- **variant** — an extra discriminator you set explicitly, for intentionally different baselines per target or configuration.
+- **capture** — the name you passed to `AssertSnapshot`.
+
+Paths come from compile-time source metadata, not the working directory, so tests find their snapshots wherever they run from. Names are normalized to be portable across Windows, Linux, and macOS; case-insensitive collisions are rejected rather than silently merged.
+
+## Parameterized tests
+
+Each row gets its own folder, automatically. No wrapper code and no per-row naming:
+
+```csharp
+[Theory]
+[InlineData("first", 1)]
+[InlineData("second", 2)]
+public void Parses(string label, int count)
+{
+    Parse(label, count).AssertSnapshot("result");
+}
+```
+
+```text
+__snapshots__/ParserTests/Parses [count=1, label=first]/result.json
+__snapshots__/ParserTests/Parses [count=2, label=second]/result.json
+```
+
+The `[...]` part appears **only for parameterized tests**. An ordinary `[Fact]` gets a plain folder — `__snapshots__/ParserTests/Parses/result.json`.
+
+The label is built from the actual argument values, so it is readable in a diff and stable across runs. xUnit `InlineData`, NUnit `TestCase`, and MSTest `DataRow` all work the same way. `CancellationToken` parameters are excluded.
+
+A short hash is appended **only when the label alone could not tell two rows apart**:
+
+```text
+Parses [count=1, label=first]              plain — the label names every argument
+Parses [value=1~9f2c1a4b7e05]              string "1" and number 1 would both read as 1
+Parses [value=a, b=c~3d7e02f1ac88]         the value contains the label's own separators
+Parses [first=aaaaaaaa…aaa~5b1c9e4470af]   the label was too long and had to be truncated
+```
+
+If you see a hash, it is carrying real information. Otherwise the path stays short — which matters, because these files get committed. See [Path length](#path-length-is-yours-to-watch).
+
+The case identifies the _invocation_; the capture name identifies the _file_. If one invocation produces several logical outputs, name them:
+
+```csharp
+result.AssertSnapshot("result");
+headers.AssertSnapshot("headers");
+```
+
+And if you loop over runtime data inside one invocation, put a stable id in the name:
+
+```csharp
+foreach (var item in items)
+{
+    item.AssertSnapshot($"item-{item.Id}");
+}
+```
+
+## Native AOT
+
+The runtime does no reflection: serializers are generated at compile time and registered by module initializers. The generator and MSBuild task run during the build and are not shipped into your app.
+
+Verified by publishing a test executable with `PublishAot=true`, `IlcTreatWarningsAsErrors=true`, and `ILLinkTreatWarningsAsErrors=true`, on Windows, Linux, and macOS.
+
+One caveat that is not about Imprint: your _test runner_ also has to support Native AOT. Runners that discover tests by reflection generally do not. For an AOT test project, drive the tests from a plain `Main` with an explicit list, which is what [`tests/TheLithium.Imprint.Specifications`](tests/TheLithium.Imprint.Specifications) does.
+
+## Custom runners
+
+You almost certainly do not need this. The build integration supplies the test lifetime automatically for any method compiled by the standard .NET SDK.
+
+If you are writing a runner it cannot see — or a host that compiles test bodies itself — open the scope yourself:
+
+```csharp
 using var scope = Snapshots.Begin(new SnapshotTestOptions
 {
     Identity = new SnapshotTestIdentity(
@@ -257,44 +569,143 @@ using var scope = Snapshots.Begin(new SnapshotTestOptions
 try
 {
     ExecuteTestBody();
-    scope.Complete();
+    scope.Complete();     // only after everything that should affect approval has succeeded
 }
 catch (Exception error)
 {
     scope.Abort(error);
     throw;
 }
-~~~
+```
 
-Snapshots.Run and Snapshots.RunAsync remain available for that explicit integration. They are not needed in ordinary framework test methods. A runner must call Complete only after all work that should influence approval has succeeded; teardown that happens after the method is outside the automatic lifetime.
+`Snapshots.Run(...)` and `Snapshots.RunAsync(...)` wrap that pattern. `Dispose` without `Complete` abandons the scope and approves nothing.
 
-## Build and verify
+`SnapshotTestOptions` carries the settings a runner may need to override per test: `Name`, `Suite`, `Case`, `Variant`, `Identity`, `RootDirectory`, `ArtifactDirectory`, `ConfigurationFile`, `Comparison`, `Naming`, `AllowEmpty`, `MaxNestingDepth`, `MaxValuesPerSnapshot`, `MaxBytesPerSnapshot`, and `CancellationToken`. In an ordinary test method you use `[SnapshotSettings]` and the config file instead.
 
-All generated build output belongs under ./artifacts:
+See [docs/FRAMEWORKS.md](docs/FRAMEWORKS.md).
 
-~~~text
-dotnet restore
-dotnet build -c Release
-dotnet test -c Release
-dotnet pack TheLithium.Imprint.slnx -c Release
-dotnet run --project tests/TheLithium.Imprint.Specifications -c Release -- --expect-managed
-dotnet restore TheLithium.Imprint.slnx -p:UsePackageReferences=true -p:RestorePackagesPath=artifacts/nuget/package-consumer --force-evaluate
-dotnet test TheLithium.Imprint.slnx -c Release -p:UsePackageReferences=true -p:RestorePackagesPath=artifacts/nuget/package-consumer --no-restore
-~~~
+## Limitations
 
-The package is written to artifacts/packages. The package-consumer restore selects that local feed and the test run exercises the bundled generator and build integration. Restore the default project-reference mode before switching back to ordinary development builds. Native AOT verification uses the executable specification project and the platform's normal Native AOT prerequisites:
+Worth knowing before you adopt it.
 
-~~~text
-dotnet publish tests/TheLithium.Imprint.Specifications -c Release -r win-x64 -p:UsePackageReferences=true -p:RestorePackagesPath=artifacts/nuget/package-consumer -p:PublishAot=true -p:SelfContained=true -p:IlcTreatWarningsAsErrors=true -p:ILLinkTreatWarningsAsErrors=true -o artifacts/native/win-x64
-./artifacts/native/win-x64/TheLithium.Imprint.Specifications.exe --expect-aot
-~~~
+### .NET 10 or later
 
-The source repository contains one runtime library, one package project, one compiler generator, one build task, and test projects for the runtime, generator, xUnit, NUnit, MSTest, and Native AOT specifications. There is no command-line tool and no snapshot ownership sidecar file. Baselines are reviewed directly under the configured snapshots folder; transient journals, locks, and failure artifacts stay under artifacts/imprint.
+`net10.0` is the floor, not a ceiling — the package targets `net10.0`, so .NET 11 and later projects consume it normally. There is no `netstandard2.0` or .NET Framework build.
 
-See [framework integration](docs/FRAMEWORKS.md), [the design notes](docs/DESIGN.md), [the type contract](docs/TYPE-SUPPORT.md), [validation](docs/VALIDATION.md), and the [licensing note](LICENSING.md) for details.
+### Some method shapes cannot be given a lifetime
 
-## Release automation
+The build task turns your test body into a local function so it can act after the body returns. A handful of shapes have no reliable "after", so they are rejected at compile time with **IMP102** rather than wrapped incorrectly. In every case the fix is small:
 
-The [release workflow](.github/workflows/release.yml) runs only for a `v*.*.*` tag or an intentional manual dispatch. It validates the managed matrix first, then packs the requested version, tests the packages as consumers, verifies a Linux Native AOT publish, uploads both `.nupkg` files to NuGet.org, and creates a GitHub Release with generated notes and package assets.
+```csharp
+// ✗ async void — the runner returns before the body finishes
+public async void Rejected()
+{
+    (await LoadAsync()).AssertSnapshot();
+}
 
-Configure the repository secret `NUGET_API_KEY` before using it. A manual release accepts a SemVer version and a prerelease flag; a tag determines both automatically. Normal pushes and pull requests never publish packages.
+// ✓ return Task
+public async Task Accepted()
+{
+    (await LoadAsync()).AssertSnapshot();
+}
+```
+
+```csharp
+// ✗ iterator — the body runs lazily, after the call has already returned
+public IEnumerable<int> Rejected()
+{
+    yield return 1;
+    value.AssertSnapshot();
+}
+
+// ✓ materialize, then capture
+public void Accepted()
+{
+    var items = Produce().ToArray();
+    items.AssertSnapshot();
+}
+```
+
+```csharp
+// ✗ ref / in / out parameters — the body cannot move into a local function
+public void Rejected(out int count)
+{
+    count = 1;
+    count.AssertSnapshot();
+}
+
+// ✓ return the value instead
+public void Accepted()
+{
+    var count = Compute();
+    count.AssertSnapshot();
+}
+```
+
+Also rejected: methods returning a custom awaitable from `async` (use `Task`/`ValueTask`), by-ref returns (`ref int Rejected()`), and tests declared on a `struct` (use a `class`).
+
+`void`, `T`, `Task`, `Task<T>`, `ValueTask`, and `ValueTask<T>` are all accepted.
+
+### Teardown outside the method cannot affect approval
+
+Approval happens when the test method returns. Anything the framework runs _after_ that is too late to stop it:
+
+```csharp
+public sealed class Tests : IAsyncLifetime          // xUnit; NUnit [TearDown], MSTest [TestCleanup] behave the same
+{
+    [Fact]
+    public async Task Example()
+    {
+        var result = await CallServiceAsync();
+        result.AssertSnapshot();
+    }                                                // ← snapshot approved here
+
+    public async Task DisposeAsync()
+    {
+        await AssertNoServerErrorsAsync();           // ← too late; the snapshot is already written
+    }
+}
+```
+
+Move the check inside the method, and it counts:
+
+```csharp
+[Fact]
+public async Task Example()
+{
+    var result = await CallServiceAsync();
+    result.AssertSnapshot();
+
+    await AssertNoServerErrorsAsync();               // throws → nothing is written
+}
+```
+
+The same applies to a `finally` block: one _inside_ the method is within the boundary, one in a framework hook is not.
+
+### Changing a data row leaves its old folder behind
+
+The case folder is part of the path, so editing an `[InlineData]` value creates a new folder and the old one simply stops being visited. Nothing deletes it — there is no global orphan pruning, by design. Delete stale folders yourself; `git status` will show them as untracked or unchanged strays.
+
+### Not provided
+
+No scrubbing pipeline, no image or binary snapshot formats, no CLI updater, no global orphan pruning. See [Volatile data](#volatile-data-timestamps-guids) for the intended approach to changing values.
+
+Pruning helpers are an idea for now.
+
+### Storage guarantees
+
+The store coordinates cooperative local processes with locks, journals, and fingerprints. It does not claim distributed-filesystem transactions or protection against hostile concurrent edits.
+
+### Path length
+
+Imprint bounds every path _segment_, but the full path is your repository layout plus your suite, test, case, and capture names. .NET writes long paths happily; **git on Windows does not** unless `core.longpaths` is `true`. A path over ~260 characters can be written by a passing test and then silently skipped by `git add`, so CI sees a missing baseline that you cannot reproduce locally.
+
+Keep names reasonable, or set `core.longpaths=true`. Imprint already helps by defaulting the test folder to the C# method name rather than the framework display name (`naming.useFrameworkDisplayNames` is `false`), and by omitting the case hash whenever the readable label is already unambiguous.
+
+## More
+
+- [docs/FRAMEWORKS.md](docs/FRAMEWORKS.md) — per-framework notes and the explicit adapter boundary
+- [docs/TYPE-SUPPORT.md](docs/TYPE-SUPPORT.md) — the complete serialization contract
+- [docs/DESIGN.md](docs/DESIGN.md) — how the lifetime, generator, and transactional store work
+- [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) — building, testing, CI, and releases
+- [LICENSING.md](LICENSING.md)

@@ -155,9 +155,9 @@ internal sealed class SnapshotStore
             }
 
             CheckLink(path);
-            var value = ReadText(path, _settings.MaxBytes);
+            var value = ReadText(path, _settings.MaxBytesPerSnapshot);
             total += SnapshotEncoding.Utf8.GetByteCount(value);
-            if (total > Math.Max(_settings.MaxBytes, SnapshotLimits.TestBytes))
+            if (total > Math.Max(_settings.MaxBytesPerSnapshot, SnapshotLimits.TestBytes))
             {
                 throw new SnapshotException("The total baseline size for this test exceeds its safety budget.");
             }

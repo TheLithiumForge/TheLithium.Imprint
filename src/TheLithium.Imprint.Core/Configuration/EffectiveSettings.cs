@@ -34,6 +34,7 @@ internal sealed record EffectiveSettings
     {
         get; init;
     }
+    /// <summary>True when the resolved policy is Verify, so no path may write to disk.</summary>
     public required bool ReadOnly
     {
         get; init;
@@ -54,15 +55,15 @@ internal sealed record EffectiveSettings
     {
         get; init;
     }
-    public required int MaxDepth
+    public required int MaxNestingDepth
     {
         get; init;
     }
-    public required int MaxNodes
+    public required int MaxValuesPerSnapshot
     {
         get; init;
     }
-    public required int MaxBytes
+    public required int MaxBytesPerSnapshot
     {
         get; init;
     }

@@ -3,8 +3,8 @@ namespace TheLithium.Imprint.Configuration.Models;
 internal sealed record ProjectConfiguration
 {
     internal SnapshotUpdate Update { get; init; } = SnapshotUpdate.Missing;
-    internal string DirectoryName { get; init; } = "__snapshots__";
-    internal bool PreferDisplayNames
+    internal string SnapshotFolderName { get; init; } = "__snapshots__";
+    internal bool UseFrameworkDisplayNames
     {
         get; init;
     }
@@ -23,8 +23,8 @@ internal sealed record ProjectConfiguration
     {
         get; init;
     }
-    internal int MaxDepth { get; init; } = SnapshotLimits.DefaultDepth;
-    internal int MaxNodes { get; init; } = SnapshotLimits.DefaultNodes;
-    internal int MaxBytes { get; init; } = SnapshotLimits.DefaultBytes;
+    internal int MaxNestingDepth { get; init; } = SnapshotLimits.DefaultDepth;
+    internal int MaxValuesPerSnapshot { get; init; } = SnapshotLimits.DefaultNodes;
+    internal int MaxBytesPerSnapshot { get; init; } = SnapshotLimits.DefaultBytes;
     internal int LockTimeoutSeconds { get; init; } = 10;
 }

@@ -1,17 +1,21 @@
 {
   "$schema": "../snapshots.schema.json",
   "version": 1,
+
   "update": "missing",
-  "directoryName": "__snapshots__",
-  "preferDisplayNames": false,
-  "artifactDirectory": "artifacts/imprint/failures",
-  "textExtension": "txt",
-  "naming": "name-then-order",
-  "allowEmpty": false,
-  "maxDepth": 64,
-  "maxNodes": 100000,
-  "maxBytes": 4194304,
-  "lockTimeoutSeconds": 10,
+  "allowEmptyTests": false,
+
+  "files": {
+    "snapshotFolderName": "__snapshots__",
+    "failureArtifactPath": "artifacts/imprint/failures",
+    "textFileExtension": "txt"
+  },
+
+  "naming": {
+    "unnamedCaptures": "name-then-order",
+    "useFrameworkDisplayNames": false
+  },
+
   "comparison": {
     "numericTolerance": 0,
     "ignoreArrayOrder": false,
@@ -19,5 +23,12 @@
     "ignoreLineEndings": true,
     "ignoreTrailingWhitespace": false,
     "maxUnorderedArrayLength": 256
+  },
+
+  "limits": {
+    "maxNestingDepth": 64,
+    "maxValuesPerSnapshot": 100000,
+    "maxBytesPerSnapshot": 4194304,
+    "lockTimeoutSeconds": 10
   }
 }

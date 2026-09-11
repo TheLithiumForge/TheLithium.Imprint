@@ -33,46 +33,28 @@ internal static class ProjectConfigurationReader
                     "version" when value.GetInt32() == 1 => config,
                     "$schema" when value.ValueKind == JsonValueKind.String => config,
                     "update" => config with { Update = Settings.ParseUpdate(RequiredString(value, property.Name)) },
-                    "directoryName" => config with { DirectoryName = RequiredString(value, property.Name) },
-                    "preferDisplayNames" => config with { PreferDisplayNames = value.GetBoolean() },
-                    "rootDirectory" => config with { RootDirectory = value.GetString() },
-                    "artifactDirectory" => config with { ArtifactDirectory = RequiredString(value, property.Name) },
-                    "textExtension" => config with
-                    {
-                        TextFormat = value.GetString() switch
-                        {
-                            "snap" => SnapshotFormat.Snap,
-                            "txt" => SnapshotFormat.Text,
-                            _ => throw new SnapshotConfigurationException("textExtension must be snap or txt.")
-                        }
-                    },
-                    "naming" => config with
-                    {
-                        Naming = value.GetString() switch
-                        {
-                            "name-then-order" => SnapshotNaming.NameThenOrder,
-                            "order" => SnapshotNaming.Order,
-                            "explicit-only" => SnapshotNaming.ExplicitOnly,
-                            _ => throw new SnapshotConfigurationException("Invalid naming policy.")
-                        }
-                    },
-                    "comparison" => config with { Comparison = ReadComparison(value) },
-                    "allowEmpty" => config with { AllowEmpty = value.GetBoolean() },
-                    "maxDepth" => config with { MaxDepth = value.GetInt32() },
-                    "maxNodes" => config with { MaxNodes = value.GetInt32() },
-                    "maxBytes" => config with { MaxBytes = value.GetInt32() },
-                    "lockTimeoutSeconds" => config with { LockTimeoutSeconds = value.GetInt32() },
-                    _ => throw new SnapshotConfigurationException("Unknown or invalid configuration property: " + property.Name)
+                    "allowEmptyTests" => config with { AllowEmpty = value.GetBoolean() },
+                    "files" => ReadFiles(config, Group(value, property.Name)),
+                    "naming" => ReadNaming(config, Group(value, property.Name)),
+                    "comparison" => config with { Comparison = ReadComparison(Group(value, property.Name)) },
+                    "limits" => ReadLimits(config, Group(value, property.Name)),
+                    _ => throw new SnapshotConfigurationException(Unknown(property.Name))
                 };
             }
-            if (PortableNames.Segment(config.DirectoryName) != config.DirectoryName)
+            if (PortableNames.Segment(config.SnapshotFolderName) != config.SnapshotFolderName)
             {
-                throw new SnapshotConfigurationException("directoryName must be a portable single folder name. Use rootDirectory for a path.");
+                throw new SnapshotConfigurationException(
+                    "files.snapshotFolderName must be a portable single folder name. Use files.snapshotRootPath for a path.");
             }
 
-            if ((config.ArtifactDirectory is not null && string.IsNullOrWhiteSpace(config.ArtifactDirectory)) || config.LockTimeoutSeconds is < 1 or > 300)
+            if (config.ArtifactDirectory is not null && string.IsNullOrWhiteSpace(config.ArtifactDirectory))
             {
-                throw new SnapshotConfigurationException("artifactDirectory must be nonempty and lockTimeoutSeconds must be 1..300.");
+                throw new SnapshotConfigurationException("files.failureArtifactPath must be a nonempty string.");
+            }
+
+            if (config.LockTimeoutSeconds is < 1 or > 300)
+            {
+                throw new SnapshotConfigurationException("limits.lockTimeoutSeconds must be 1..300.");
             }
 
             Settings.ValidateComparison(config.Comparison);
@@ -85,15 +67,74 @@ internal static class ProjectConfigurationReader
         }
     }
 
-    private static string RequiredString(JsonElement value, string property)
+    private static ProjectConfiguration ReadFiles(ProjectConfiguration config, JsonElement element)
     {
-        var text = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-        if (string.IsNullOrWhiteSpace(text))
+        foreach (var property in UniqueProperties(element))
         {
-            throw new SnapshotConfigurationException(property + " must be a nonempty string.");
+            var value = property.Value;
+            config = property.Name switch
+            {
+                "snapshotFolderName" => config with { SnapshotFolderName = RequiredString(value, "files.snapshotFolderName") },
+                "snapshotRootPath" => config with { RootDirectory = value.GetString() },
+                "failureArtifactPath" => config with { ArtifactDirectory = RequiredString(value, "files.failureArtifactPath") },
+                "textFileExtension" => config with
+                {
+                    TextFormat = value.GetString() switch
+                    {
+                        "snap" => SnapshotFormat.Snap,
+                        "txt" => SnapshotFormat.Text,
+                        _ => throw new SnapshotConfigurationException("files.textFileExtension must be \"snap\" or \"txt\".")
+                    }
+                },
+                _ => throw new SnapshotConfigurationException(Unknown("files." + property.Name))
+            };
         }
 
-        return text;
+        return config;
+    }
+
+    private static ProjectConfiguration ReadNaming(ProjectConfiguration config, JsonElement element)
+    {
+        foreach (var property in UniqueProperties(element))
+        {
+            var value = property.Value;
+            config = property.Name switch
+            {
+                "unnamedCaptures" => config with
+                {
+                    Naming = value.GetString() switch
+                    {
+                        "name-then-order" => SnapshotNaming.NameThenOrder,
+                        "order" => SnapshotNaming.Order,
+                        "explicit-only" => SnapshotNaming.ExplicitOnly,
+                        _ => throw new SnapshotConfigurationException(
+                            "naming.unnamedCaptures must be \"name-then-order\", \"order\", or \"explicit-only\".")
+                    }
+                },
+                "useFrameworkDisplayNames" => config with { UseFrameworkDisplayNames = value.GetBoolean() },
+                _ => throw new SnapshotConfigurationException(Unknown("naming." + property.Name))
+            };
+        }
+
+        return config;
+    }
+
+    private static ProjectConfiguration ReadLimits(ProjectConfiguration config, JsonElement element)
+    {
+        foreach (var property in UniqueProperties(element))
+        {
+            var value = property.Value;
+            config = property.Name switch
+            {
+                "maxNestingDepth" => config with { MaxNestingDepth = value.GetInt32() },
+                "maxValuesPerSnapshot" => config with { MaxValuesPerSnapshot = value.GetInt32() },
+                "maxBytesPerSnapshot" => config with { MaxBytesPerSnapshot = value.GetInt32() },
+                "lockTimeoutSeconds" => config with { LockTimeoutSeconds = value.GetInt32() },
+                _ => throw new SnapshotConfigurationException(Unknown("limits." + property.Name))
+            };
+        }
+
+        return config;
     }
 
     private static SnapshotComparison ReadComparison(JsonElement element)
@@ -109,11 +150,62 @@ internal static class ProjectConfigurationReader
                 "ignoreLineEndings" => options with { IgnoreLineEndings = property.Value.GetBoolean() },
                 "ignoreTrailingWhitespace" => options with { IgnoreTrailingWhitespace = property.Value.GetBoolean() },
                 "maxUnorderedArrayLength" => options with { MaxUnorderedArrayLength = property.Value.GetInt32() },
-                _ => throw new SnapshotConfigurationException("Unknown comparison property: " + property.Name)
+                _ => throw new SnapshotConfigurationException(Unknown("comparison." + property.Name))
             };
         }
 
         return options;
+    }
+
+    /// <summary>Names a group whose value must be an object, so a stale flat value reports the new location.</summary>
+    private static JsonElement Group(JsonElement value, string name)
+        => value.ValueKind == JsonValueKind.Object
+            ? value
+            : throw new SnapshotConfigurationException("\"" + name + "\" must be an object, for example "
+                + name + ": { " + Example(name) + " }.");
+
+    private static string Example(string group) => group switch
+    {
+        "files" => "\"snapshotFolderName\": \"__snapshots__\"",
+        "naming" => "\"unnamedCaptures\": \"name-then-order\"",
+        "limits" => "\"maxNestingDepth\": 64",
+        _ => "\"ignoreLineEndings\": true"
+    };
+
+    /// <summary>Sends a property that was renamed or grouped to its new spelling instead of only rejecting it.</summary>
+    /// <param name="name">The property as written, qualified with its group when it was inside one.</param>
+    private static string Unknown(string name)
+    {
+        // Match on the leaf so an old spelling is recognised whether or not it was written in a group.
+        var leaf = name[(name.LastIndexOf('.') + 1)..];
+        var moved = leaf switch
+        {
+            "directoryName" => "files.snapshotFolderName",
+            "rootDirectory" => "files.snapshotRootPath",
+            "artifactDirectory" => "files.failureArtifactPath",
+            "textExtension" => "files.textFileExtension",
+            "preferDisplayNames" => "naming.useFrameworkDisplayNames",
+            "maxDepth" => "limits.maxNestingDepth",
+            "maxNodes" => "limits.maxValuesPerSnapshot",
+            "maxBytes" => "limits.maxBytesPerSnapshot",
+            "allowEmpty" => "allowEmptyTests",
+            _ => null
+        };
+
+        return moved is null
+            ? "Unknown or invalid configuration property: " + name
+            : "Unknown configuration property: " + name + ". It is now \"" + moved + "\".";
+    }
+
+    private static string RequiredString(JsonElement value, string property)
+    {
+        var text = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            throw new SnapshotConfigurationException(property + " must be a nonempty string.");
+        }
+
+        return text;
     }
 
     private static IEnumerable<JsonProperty> UniqueProperties(JsonElement element)

@@ -5,7 +5,8 @@ public enum SnapshotUpdate
 {
     /// <summary>Use the containing test, suite, or project policy.</summary>
     Inherit = 0,
-    /// <summary>Require every snapshot to exist and match; never write baselines.</summary>
+    /// <summary>Require every snapshot to exist and match. Nothing on disk changes, including
+    /// recovery of an interrupted commit, which is reported instead of being applied.</summary>
     Verify = 1,
     /// <summary>Create missing snapshots. Existing differences still fail. This is the project default.</summary>
     Missing = 2,

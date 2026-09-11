@@ -11,6 +11,8 @@
     <ProjectReference Include="../TheLithium.Imprint.Generator/TheLithium.Imprint.Generator.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" />
     <ProjectReference Include="../TheLithium.Imprint.Build/TheLithium.Imprint.Build.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" />
     <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <!-- Shipped so a consumer can reference the schema offline instead of over the network. -->
+    <None Include="../../snapshots.schema.json" Pack="true" PackagePath="/" />
     <None Update="lib/net10.0/_._" Pack="true" PackagePath="lib/net10.0/_._" />
     <None Update="buildTransitive/TheLithium.Imprint.props" Pack="true" PackagePath="buildTransitive/TheLithium.Imprint.props" />
     <None Update="buildTransitive/TheLithium.Imprint.targets" Pack="true" PackagePath="buildTransitive/TheLithium.Imprint.targets" />

@@ -61,8 +61,7 @@ public static partial class Specs
         (nameof(InterruptedCommitRecovers), Check.Sync(InterruptedCommitRecovers)),
         (nameof(ReadOnlyRefusesRecovery), Check.Sync(ReadOnlyRefusesRecovery)),
         (nameof(GlobalVerifyOverridesSource), Check.Sync(GlobalVerifyOverridesSource)),
-        (nameof(GlobalSelectionIsAnAllowList), Check.Sync(GlobalSelectionIsAnAllowList)),
-        (nameof(CiRequiresExplicitWritePermission), Check.Sync(CiRequiresExplicitWritePermission)),
+        (nameof(CiVerifiesUnlessTheRunAsksOtherwise), Check.Sync(CiVerifiesUnlessTheRunAsksOtherwise)),
         (nameof(CustomComparer), Check.Sync(CustomComparer)),
         (nameof(CultureDoesNotChangeJson), Check.Sync(CultureDoesNotChangeJson)),
         (nameof(VerificationDetectsConcurrentChanges), Check.Sync(VerificationDetectsConcurrentChanges)),
@@ -263,7 +262,7 @@ public static partial class Specs
     private static void ProjectConfiguration()
     {
         using var f = new Fixture();
-        f.Configure("{\"update\":\"all\",\"textExtension\":\"txt\",\"preferDisplayNames\":true}");
+        f.Configure("{\"update\":\"all\",\"files\":{\"textFileExtension\":\"txt\"},\"naming\":{\"useFrameworkDisplayNames\":true}}");
         using var project = new EnvironmentValue("IMPRINT_PROJECT_ROOT", f.Root);
         GeneratedFixtures.PreferredDisplayName();
         Check.True(File.Exists(Path.Combine(f.Root, "__snapshots__", "Generated suite", "Readable generated display", "value.json")));
@@ -569,7 +568,7 @@ public static partial class Specs
         Check.Throws<SnapshotCaptureException>(() => Snapshots.Run(() => new string('x', 100).AssertSnapshot("value"),
             f.Options(SnapshotUpdate.All) with
             {
-                MaxBytes = 16
+                MaxBytesPerSnapshot = 16
             }));
         var nested = new
         {
@@ -584,7 +583,7 @@ public static partial class Specs
         Check.Throws<SnapshotCaptureException>(() => Snapshots.Run(() => nested.AssertSnapshot("value"),
             f.Options(SnapshotUpdate.All) with
             {
-                MaxDepth = 2
+                MaxNestingDepth = 2
             }));
     }
 
@@ -655,7 +654,7 @@ public static partial class Specs
     {
         using var f = new Fixture();
         SimulateInterruptedCommit(f);
-        using (new EnvironmentValue("IMPRINT_READ_ONLY", "true"))
+        using (new EnvironmentValue("IMPRINT_UPDATE", "verify"))
         {
             Check.Throws<SnapshotConflictException>(() => f.Run(() => 1.AssertSnapshot("value")));
         }
@@ -676,21 +675,14 @@ public static partial class Specs
         Check.True(!File.Exists(f.FilePath("value.json")));
     }
 
-    private static void GlobalSelectionIsAnAllowList()
-    {
-        using var f = new Fixture();
-        using var update = new EnvironmentValue("IMPRINT_UPDATE", "all");
-        using var selection = new EnvironmentValue("IMPRINT_TEST", "*Allowed*");
-        f.Run(() => 1.AssertSnapshot("value"), SnapshotUpdate.Verify, "Allowed");
-        Check.Throws<SnapshotMismatchException>(() => f.Run(() => 1.AssertSnapshot("value"), SnapshotUpdate.All, "Denied"));
-    }
-
-    private static void CiRequiresExplicitWritePermission()
+    private static void CiVerifiesUnlessTheRunAsksOtherwise()
     {
         using var f = new Fixture();
         using var ci = new EnvironmentValue("CI", "true");
+        // A committed "all" policy must not write in continuous integration.
         Check.Throws<SnapshotMismatchException>(() => f.Run(() => 1.AssertSnapshot("value"), SnapshotUpdate.All));
-        using var allowed = new EnvironmentValue("IMPRINT_ALLOW_CI_UPDATE", "true");
+        // An update requested for this run is a deliberate act and overrides the default.
+        using var requested = new EnvironmentValue("IMPRINT_UPDATE", "all");
         f.Run(() => 1.AssertSnapshot("value"), SnapshotUpdate.All);
     }
 
@@ -745,9 +737,22 @@ public static partial class Specs
     private static void NullConfigurationStringsFailClearly()
     {
         using var f = new Fixture();
-        foreach (var property in new[] { "update", "directoryName", "artifactDirectory" })
+        foreach (var json in new[]
         {
-            f.Configure("{\"" + property + "\":null}");
+            "{\"update\":null}",
+            "{\"files\":{\"snapshotFolderName\":null}}",
+            "{\"files\":{\"failureArtifactPath\":null}}",
+            // A property that was grouped or renamed must be rejected under its old spelling.
+            "{\"directoryName\":\"__snapshots__\"}",
+            "{\"maxDepth\":64}",
+            "{\"allowEmpty\":true}",
+            "{\"files\":{\"textExtension\":\"txt\"}}",
+            "{\"limits\":{\"maxNodes\":1000}}",
+            // A group given a flat value must be rejected rather than silently ignored.
+            "{\"naming\":\"order\"}"
+        })
+        {
+            f.Configure(json);
             Check.Throws<SnapshotConfigurationException>(() => f.Run(() => 1.AssertSnapshot("value")));
         }
     }

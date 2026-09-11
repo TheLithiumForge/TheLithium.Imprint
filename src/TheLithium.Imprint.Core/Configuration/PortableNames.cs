@@ -81,37 +81,4 @@ internal static class PortableNames
         var name = parts[^1].Trim().TrimStart('@');
         return name is "null" or "true" or "false" or "this" or "base" or "default" ? null : name;
     }
-
-    internal static bool Glob(string pattern, string text)
-    {
-        int p = 0, t = 0, star = -1, retry = 0;
-        while (t < text.Length)
-        {
-            if (p < pattern.Length && (pattern[p] == '?' || pattern[p] == text[t]))
-            {
-                p++;
-                t++;
-            }
-            else if (p < pattern.Length && pattern[p] == '*')
-            {
-                star = p++;
-                retry = t;
-            }
-            else if (star >= 0)
-            {
-                p = star + 1;
-                t = ++retry;
-            }
-            else
-            {
-                return false;
-            }
-        }
-        while (p < pattern.Length && pattern[p] == '*')
-        {
-            p++;
-        }
-
-        return p == pattern.Length;
-    }
 }

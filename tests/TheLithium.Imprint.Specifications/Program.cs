@@ -22,7 +22,7 @@ internal static class Program
             }
 
             writer.WriteEndArray();
-            foreach (var variable in new[] { "IMPRINT_UPDATE", "IMPRINT_TEST", "IMPRINT_READ_ONLY", "IMPRINT_ALLOW_CI_UPDATE" })
+            foreach (var variable in new[] { "IMPRINT_UPDATE", "IMPRINT_PROJECT_ROOT", "CI" })
             {
                 writer.WriteString(variable, Environment.GetEnvironmentVariable(variable));
             }
@@ -41,8 +41,7 @@ internal static class Program
             Console.Error.WriteLine("Expected a managed executable, but dynamic code is unavailable.");
             return 1;
         }
-        var names = new[] { "IMPRINT_UPDATE", "IMPRINT_TEST", "IMPRINT_READ_ONLY", "IMPRINT_CONFIG",
-            "IMPRINT_PROJECT_ROOT", "IMPRINT_ALLOW_CI_UPDATE", "CI" };
+        var names = new[] { "IMPRINT_UPDATE", "IMPRINT_PROJECT_ROOT", "CI" };
         var isolated = names.Select(name => new EnvironmentValue(name, null)).ToArray();
         try
         {

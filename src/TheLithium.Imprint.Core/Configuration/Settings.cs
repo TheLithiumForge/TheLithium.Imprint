@@ -14,14 +14,12 @@ internal static class Settings
         var project = identity.ProjectDirectory;
         var sourceFile = identity.SourceFile;
         var suite = identity.Suite;
-        var logicalId = identity.LogicalId ?? $"{identity.Suite}::{identity.Test}";
 
-        var configFile = Environment.GetEnvironmentVariable("IMPRINT_CONFIG")
-            ?? options.ConfigurationFile;
+        var configFile = options.ConfigurationFile;
         var explicitConfig = configFile is not null;
         configFile = configFile is null ? Path.Combine(project, "snapshots.config.json") : FullPath(project, configFile);
         var config = ProjectConfigurationReader.Read(configFile, explicitConfig);
-        if (options.Identity is null && config.PreferDisplayNames && descriptor?.DisplayName is { Length: > 0 } displayName)
+        if (options.Identity is null && config.UseFrameworkDisplayNames && descriptor?.DisplayName is { Length: > 0 } displayName)
         {
             identity = identity with { Test = displayName };
         }
@@ -29,24 +27,19 @@ internal static class Settings
         var update = ResolvePolicy(options, descriptor, config);
 
         ValidateUpdate(update);
-        var runText = Environment.GetEnvironmentVariable("IMPRINT_UPDATE");
-        SnapshotUpdate? runOverride = runText is null ? null : ParseUpdate(runText);
-        var selector = Environment.GetEnvironmentVariable("IMPRINT_TEST");
-        if (selector is not null && runOverride is null)
-        {
-            throw new SnapshotConfigurationException("IMPRINT_TEST requires IMPRINT_UPDATE.");
-        }
 
-        if (selector is not null && !PortableNames.Glob(selector, TestNames.DisplayName(identity))
-            && !PortableNames.Glob(selector, logicalId))
-        {
-            runOverride = SnapshotUpdate.Verify;
-        }
+        // IMPRINT_UPDATE is the one policy channel outside the typed API. A per-run approval
+        // must not require editing and reverting a committed file, and this library has no
+        // runner adapter, so no command line or .runsettings value can reach it.
+        // Continuous integration verifies unless that particular run asks for something else.
+        var runOverride = ResolveRunOverride();
 
-        var readOnly = EnvironmentFlag("IMPRINT_READ_ONLY")
-            || (EnvironmentFlag("CI") && !EnvironmentFlag("IMPRINT_ALLOW_CI_UPDATE"));
+        // Read-only is a property of the run, never of one test: a run-wide Verify means nothing
+        // on disk changes, including recovery of an interrupted commit. A test or project policy
+        // of Verify is ordinary precedence that a narrower scope is still allowed to override.
+        var readOnly = runOverride == SnapshotUpdate.Verify;
         var rootSetting = options.RootDirectory ?? config.RootDirectory;
-        var baselineRoot = rootSetting is null ? Path.Combine(project, config.DirectoryName) : FullPath(project, rootSetting);
+        var baselineRoot = rootSetting is null ? Path.Combine(project, config.SnapshotFolderName) : FullPath(project, rootSetting);
         var relativeSource = Path.GetRelativePath(project, sourceFile);
         if (options.Identity is null && (Path.IsPathRooted(relativeSource) || relativeSource == ".." || relativeSource.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
         {
@@ -72,12 +65,12 @@ internal static class Settings
 
         var comparison = options.Comparison ?? config.Comparison;
         ValidateComparison(comparison);
-        var depth = options.MaxDepth ?? config.MaxDepth;
-        var nodes = options.MaxNodes ?? config.MaxNodes;
-        var bytes = options.MaxBytes ?? config.MaxBytes;
+        var depth = options.MaxNestingDepth ?? config.MaxNestingDepth;
+        var nodes = options.MaxValuesPerSnapshot ?? config.MaxValuesPerSnapshot;
+        var bytes = options.MaxBytesPerSnapshot ?? config.MaxBytesPerSnapshot;
         if (depth is < 1 or > SnapshotLimits.MaximumDepth || nodes is < 1 or > SnapshotLimits.MaximumNodes || bytes is < 1 or > SnapshotLimits.MaximumBytes)
         {
-            throw new SnapshotConfigurationException("Limits: MaxDepth 1..256, MaxNodes 1..10000000, MaxBytes 1..268435456.");
+            throw new SnapshotConfigurationException("Limits: MaxNestingDepth 1..256, MaxValuesPerSnapshot 1..10000000, MaxBytesPerSnapshot 1..268435456.");
         }
 
         var naming = options.Naming ?? config.Naming;
@@ -101,12 +94,28 @@ internal static class Settings
             Naming = naming,
             TextFormat = config.TextFormat,
             AllowEmpty = options.AllowEmpty ?? config.AllowEmpty,
-            MaxDepth = depth,
-            MaxNodes = nodes,
-            MaxBytes = bytes,
+            MaxNestingDepth = depth,
+            MaxValuesPerSnapshot = nodes,
+            MaxBytesPerSnapshot = bytes,
             LockTimeout = TimeSpan.FromSeconds(config.LockTimeoutSeconds),
             Cancellation = options.CancellationToken
         };
+    }
+
+    /// <summary>The policy this run asks for, above any test, attribute, or project setting.</summary>
+    private static SnapshotUpdate? ResolveRunOverride()
+    {
+        var requested = Environment.GetEnvironmentVariable("IMPRINT_UPDATE");
+        if (requested is not null)
+        {
+            return ParseUpdate(requested);
+        }
+        if (EnvironmentFlag("CI"))
+        {
+            return SnapshotUpdate.Verify;
+        }
+
+        return null;
     }
 
     private static SnapshotUpdate ResolvePolicy(SnapshotTestOptions options, SnapshotDescriptor? descriptor, ProjectConfiguration config)
