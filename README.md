@@ -1,6 +1,27 @@
 # TheLithium.Imprint
 
+[![Build and test](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml/badge.svg)](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml)
+[![xUnit](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml/badge.svg?job=xunit)](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml)
+[![NUnit](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml/badge.svg?job=nunit)](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml)
+[![MSTest](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml/badge.svg?job=mstest)](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml)
+[![Native AOT](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml/badge.svg?job=aot)](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml)
+[![NuGet](https://img.shields.io/nuget/vpre/TheLithium.Imprint?logo=nuget&label=NuGet)](https://www.nuget.org/packages/TheLithium.Imprint)
+[![.NET 10](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/download/dotnet/10.0)
+
 TheLithium.Imprint is a snapshot testing library for .NET 10. It keeps the normal test flow, works with xUnit, NUnit, MSTest, and other runners that report uncaught .NET exceptions, and supports Native AOT through compile-time source generation.
+
+It is designed around one small idea: compute a value in the test you already have, then assert it where it is meaningful. There is no callback runner to learn and no separate command required for ordinary updates.
+
+**What it gives you**
+
+- **Normal test bodies.** Call `AssertSnapshot()` or `UpdateSnapshot()` beside your existing assertions.
+- **Safe first runs.** A missing snapshot passes by default and is written only after the test succeeds.
+- **Stable identities.** Suite, method, display name, parameterized case, variant, and capture name are kept separate.
+- **Useful failures.** JSON member paths, bounded unified diffs, and expected/received artifacts are available on mismatch.
+- **AOT-friendly output.** Serialization is generated at compile time from declared types; the runtime does not discover members through reflection.
+- **One package.** The main package carries the Core runtime, analyzer, and MSBuild integration. A Core-only package is available for custom hosts.
+
+## Quick start
 
 ~~~csharp
 using TheLithium.Imprint;
@@ -28,11 +49,33 @@ There is no callback wrapper in the normal API. The package adds the snapshot li
 
 Add the package to the test project:
 
+~~~text
+dotnet add package TheLithium.Imprint --version 0.1.0-preview.1
+~~~
+
 ~~~xml
 <PackageReference Include="TheLithium.Imprint" Version="0.1.0-preview.1" />
 ~~~
 
 The package brings the .NET 10 runtime through its TheLithium.Imprint.Core dependency, plus the source generator and build integration that supply test identity and method lifetimes. The compiler-only components are not runtime dependencies. A project using only TheLithium.Imprint.Core can provide its own identity and lifetime through Snapshots.Begin.
+
+The package targets `net10.0`. The repository build uses the SDK selected by [global.json](global.json); applications only need the .NET 10 SDK that matches their normal build policy.
+
+## CI coverage
+
+The [GitHub Actions build matrix](.github/workflows/build-test.yml) runs on Windows, Ubuntu, and macOS. It has two explicit lanes so the runtime mode is visible in every run:
+
+- **Managed lane:** builds the solution, verifies formatting, runs the xUnit, NUnit, and MSTest projects, and runs the executable specifications with `--expect-managed`.
+- **Packaged AOT lane:** packs both NuGet projects, restores the test projects from that local package feed, runs the packaged tests in managed mode, publishes `tests/TheLithium.Imprint.Specifications` as Native AOT for the platform, and runs the resulting executable with `--expect-aot`.
+
+The framework adapters remain managed test hosts, which is how their runners are designed to work. The executable specification project is the AOT test project: it exercises the same Core runtime and generated package integration without requiring a reflection-heavy test adapter. The separate framework jobs make each badge above independently meaningful.
+
+| Surface | Project | Runtime mode |
+| --- | --- | --- |
+| xUnit integration and generator tests | `tests/TheLithium.Imprint.Tests` and `tests/TheLithium.Imprint.Generator.Tests` | Managed |
+| NUnit integration | `tests/TheLithium.Imprint.NUnit.Tests` | Managed |
+| MSTest integration | `tests/TheLithium.Imprint.MSTest.Tests` | Managed |
+| End-to-end Core and package specifications | `tests/TheLithium.Imprint.Specifications` | Managed and Native AOT |
 
 ## Assert and update
 
@@ -234,6 +277,7 @@ dotnet restore
 dotnet build -c Release
 dotnet test -c Release
 dotnet pack TheLithium.Imprint.slnx -c Release
+dotnet run --project tests/TheLithium.Imprint.Specifications -c Release -- --expect-managed
 dotnet restore TheLithium.Imprint.slnx -p:UsePackageReferences=true -p:RestorePackagesPath=artifacts/nuget/package-consumer --force-evaluate
 dotnet test TheLithium.Imprint.slnx -c Release -p:UsePackageReferences=true -p:RestorePackagesPath=artifacts/nuget/package-consumer --no-restore
 ~~~
@@ -241,10 +285,16 @@ dotnet test TheLithium.Imprint.slnx -c Release -p:UsePackageReferences=true -p:R
 The package is written to artifacts/packages. The package-consumer restore selects that local feed and the test run exercises the bundled generator and build integration. Restore the default project-reference mode before switching back to ordinary development builds. Native AOT verification uses the executable specification project and the platform's normal Native AOT prerequisites:
 
 ~~~text
-dotnet publish tests/TheLithium.Imprint.Specifications -c Release -r win-x64 -p:UsePackageReferences=true -p:RestorePackagesPath=artifacts/nuget/package-consumer -p:PublishAot=true -p:SelfContained=true -o artifacts/native/win-x64
+dotnet publish tests/TheLithium.Imprint.Specifications -c Release -r win-x64 -p:UsePackageReferences=true -p:RestorePackagesPath=artifacts/nuget/package-consumer -p:PublishAot=true -p:SelfContained=true -p:IlcTreatWarningsAsErrors=true -p:ILLinkTreatWarningsAsErrors=true -o artifacts/native/win-x64
 ./artifacts/native/win-x64/TheLithium.Imprint.Specifications.exe --expect-aot
 ~~~
 
 The source repository contains one runtime library, one package project, one compiler generator, one build task, and test projects for the runtime, generator, xUnit, NUnit, MSTest, and Native AOT specifications. There is no command-line tool and no snapshot ownership sidecar file. Baselines are reviewed directly under the configured snapshots folder; transient journals, locks, and failure artifacts stay under artifacts/imprint.
 
 See [framework integration](docs/FRAMEWORKS.md), [the design notes](docs/DESIGN.md), [the type contract](docs/TYPE-SUPPORT.md), [validation](docs/VALIDATION.md), and the [licensing note](LICENSING.md) for details.
+
+## Release automation
+
+The [release workflow](.github/workflows/release.yml) runs only for a `v*.*.*` tag or an intentional manual dispatch. It validates the managed matrix first, then packs the requested version, tests the packages as consumers, verifies a Linux Native AOT publish, uploads both `.nupkg` files to NuGet.org, and creates a GitHub Release with generated notes and package assets.
+
+Configure the repository secret `NUGET_API_KEY` before using it. A manual release accepts a SemVer version and a prerelease flag; a tag determines both automatically. Normal pushes and pull requests never publish packages.

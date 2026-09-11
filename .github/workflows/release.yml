@@ -1,0 +1,223 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: SemVer package version, without or with the leading v
+        required: true
+        type: string
+      prerelease:
+        description: Mark the GitHub release as a prerelease for a stable version
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_NOLOGO: true
+  NUGET_XMLDOC_MODE: skip
+
+jobs:
+  validate:
+    name: Validate (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Restore
+        run: dotnet restore TheLithium.Imprint.slnx --force-evaluate
+      - name: Build
+        run: dotnet build TheLithium.Imprint.slnx -c Release --no-restore
+      - name: Verify formatting
+        run: dotnet format TheLithium.Imprint.slnx whitespace --no-restore --verify-no-changes
+      - name: Test
+        run: dotnet test TheLithium.Imprint.slnx -c Release --no-build --no-restore --logger trx --results-directory artifacts/test-results
+      - name: Run managed executable specifications
+        run: dotnet run --project tests/TheLithium.Imprint.Specifications -c Release --no-build --no-restore -- --expect-managed
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-validation-${{ matrix.os }}
+          path: artifacts/test-results
+
+  publish:
+    name: Pack, verify, and publish
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Resolve release version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+
+          version="${INPUT_VERSION:-}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          version="${version#v}"
+
+          if [[ ! "$version" =~ ^([0-9]+\.){2}[0-9]+([.-][0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+            echo "Version '$version' is not valid SemVer." >&2
+            exit 1
+          fi
+
+          tag="v$version"
+          prerelease="${INPUT_PRERELEASE:-false}"
+          if [[ "$version" == *-* ]]; then
+            prerelease=true
+          fi
+
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+      - name: Restore release build
+        run: >-
+          dotnet restore TheLithium.Imprint.slnx
+          -p:Version=${{ steps.version.outputs.version }}
+          --force-evaluate
+      - name: Build release
+        run: >-
+          dotnet build TheLithium.Imprint.slnx
+          -c Release
+          -p:Version=${{ steps.version.outputs.version }}
+          --no-restore
+      - name: Pack NuGet packages
+        run: >-
+          dotnet pack TheLithium.Imprint.slnx
+          -c Release
+          -p:Version=${{ steps.version.outputs.version }}
+          --no-build
+          --no-restore
+      - name: Restore package consumers
+        run: >-
+          dotnet restore TheLithium.Imprint.slnx
+          -p:Version=${{ steps.version.outputs.version }}
+          -p:UsePackageReferences=true
+          -p:RestorePackagesPath=artifacts/nuget/release-consumer
+          --force-evaluate
+      - name: Verify packed package consumers
+        run: >-
+          dotnet test TheLithium.Imprint.slnx
+          -c Release
+          -p:Version=${{ steps.version.outputs.version }}
+          -p:UsePackageReferences=true
+          -p:RestorePackagesPath=artifacts/nuget/release-consumer
+          --no-restore
+          --logger trx
+          --results-directory artifacts/package-test-results
+      - name: Verify packed managed specifications
+        run: >-
+          dotnet run
+          --project tests/TheLithium.Imprint.Specifications
+          -c Release
+          -p:Version=${{ steps.version.outputs.version }}
+          -p:UsePackageReferences=true
+          -p:RestorePackagesPath=artifacts/nuget/release-consumer
+          --no-build
+          --no-restore
+          --
+          --expect-managed
+      - name: Verify packed Native AOT consumer
+        run: >-
+          dotnet publish tests/TheLithium.Imprint.Specifications
+          -c Release
+          -r linux-x64
+          -p:Version=${{ steps.version.outputs.version }}
+          -p:UsePackageReferences=true
+          -p:RestorePackagesPath=artifacts/nuget/release-consumer
+          -p:PublishAot=true
+          -p:SelfContained=true
+          -p:IlcTreatWarningsAsErrors=true
+          -p:ILLinkTreatWarningsAsErrors=true
+          -o artifacts/native/release-linux-x64
+      - name: Run packed Native AOT specifications
+        run: ./artifacts/native/release-linux-x64/TheLithium.Imprint.Specifications --expect-aot
+      - name: Verify package outputs
+        shell: bash
+        run: |
+          shopt -s nullglob
+          packages=(artifacts/packages/*.nupkg)
+          if [[ ${#packages[@]} -ne 2 ]]; then
+            echo "Expected exactly two NuGet packages, found ${#packages[@]}." >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-packages
+          path: |
+            artifacts/packages/*.nupkg
+            artifacts/package-test-results
+      - name: Check NuGet credentials
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        shell: bash
+        run: |
+          if [[ -z "${NUGET_API_KEY:-}" ]]; then
+            echo "The NUGET_API_KEY repository secret is required for a release." >&2
+            exit 1
+          fi
+      - name: Publish packages to NuGet.org
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for package in artifacts/packages/*.nupkg; do
+            dotnet nuget push "$package" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+          done
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          arguments=(
+            "$RELEASE_TAG"
+            artifacts/packages/*.nupkg
+            --title "TheLithium.Imprint $RELEASE_VERSION"
+            --generate-notes
+            --target "$GITHUB_SHA"
+          )
+          if [[ "$RELEASE_PRERELEASE" == true ]]; then
+            arguments+=(--prerelease)
+          fi
+
+          gh release create "${arguments[@]}"

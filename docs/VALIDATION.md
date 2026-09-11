@@ -17,6 +17,7 @@ Run the complete managed suite with:
 ~~~text
 dotnet build TheLithium.Imprint.slnx -c Release
 dotnet test TheLithium.Imprint.slnx -c Release
+dotnet run --project tests/TheLithium.Imprint.Specifications -c Release -- --expect-managed
 ~~~
 
 The package project can be packed and consumed by the test projects with:
@@ -37,6 +38,8 @@ dotnet publish tests/TheLithium.Imprint.Specifications -c Release -r win-x64 -p:
 ~~~
 
 The executable checks RuntimeFeature.IsDynamicCodeSupported and runs the explicitly registered specification list. External test frameworks and applications still need their own Native AOT support.
+
+The `build-test.yml` workflow runs these managed checks on Windows, Ubuntu, and macOS, then repeats the package-consumer checks and publishes the executable specification project as Native AOT for each platform. The xUnit, NUnit, and MSTest adapters are intentionally tested as managed hosts; the executable specification project is the AOT lane.
 
 ## Review evidence
 
