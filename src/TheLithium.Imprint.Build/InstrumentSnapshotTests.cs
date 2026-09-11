@@ -113,7 +113,8 @@ public sealed class InstrumentSnapshotTests : Task
                 var instrumented = tree.GetText().WithChanges(edits);
                 var fileName = $"{index:D4}-{Path.GetFileName(tree.FilePath)}";
                 var output = Path.Combine(OutputDirectory, fileName);
-                var content = $"#line 1 {Literal(tree.FilePath)}\n{instrumented}";
+                var sourceFile = NormalizeFilePath(tree.FilePath);
+                var content = $"#line 1 {LineDirectiveLiteral(sourceFile)}\n{instrumented}";
                 if (!File.Exists(output) || File.ReadAllText(output) != content)
                 {
                     File.WriteAllText(output, content, new UTF8Encoding(false));
@@ -138,8 +139,9 @@ public sealed class InstrumentSnapshotTests : Task
 
     private static string BuildLifetime(MethodDeclarationSyntax method, IMethodSymbol symbol, SemanticModel model)
     {
-        var sourceFile = method.SyntaxTree.FilePath;
-        var source = Literal(sourceFile);
+        var source = NormalizeFilePath(method.SyntaxTree.FilePath);
+        var sourceLiteral = CodeLiteral(source);
+        var sourceDirective = LineDirectiveLiteral(source);
         var methodLine = method.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
         var body = (SyntaxNode?)method.Body ?? method.ExpressionBody
             ?? throw new InvalidOperationException("A lifetime requires a method body.");
@@ -174,15 +176,15 @@ public sealed class InstrumentSnapshotTests : Task
         return $$"""
             {
             #line hidden
-                {{prefix}}global::TheLithium.Imprint.Generation.TestExecution.{{runner}}(
-                    {{functionName}}, {{options}}, sourceFile: {{source}}, sourceLine: {{methodLine}});
+                    {{prefix}}global::TheLithium.Imprint.Generation.TestExecution.{{runner}}(
+                    {{functionName}}, {{options}}, sourceFile: {{sourceLiteral}}, sourceLine: {{methodLine}});
 
                 {{functionAsync}}{{method.ReturnType}} {{functionName}}()
-            #line {{bodyLine}} {{source}}
+            #line {{bodyLine}} {{sourceDirective}}
                 {{original}}
             #line hidden
             }
-            #line {{endLine}} {{source}}
+            #line {{endLine}} {{sourceDirective}}
             """;
     }
 
@@ -192,5 +194,9 @@ public sealed class InstrumentSnapshotTests : Task
         Log.LogError(null, "IMP102", null, tree.FilePath, position.Line + 1, position.Character + 1, 0, 0, message);
     }
 
-    private static string Literal(string text) => SymbolDisplay.FormatLiteral(text, quote: true);
+    private static string NormalizeFilePath(string text) => text.Replace('\\', '/');
+
+    private static string CodeLiteral(string text) => SymbolDisplay.FormatLiteral(text, quote: true);
+
+    private static string LineDirectiveLiteral(string text) => $"\"{text.Replace("\"", "\\\"")}\"";
 }
