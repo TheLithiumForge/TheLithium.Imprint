@@ -24,6 +24,13 @@ public sealed class NormalFlowTests
         "after".AssertSnapshot("second");
     }
 
+    [Fact, SnapshotSettings(Update = SnapshotUpdate.Missing)]
+    public void StagesAnExplicitUpdateInAnOrdinaryTest()
+    {
+        var result = new { State = "approved" };
+        result.UpdateSnapshot("explicit");
+    }
+
     [Theory, InlineData("first", 1), InlineData("second", 2), SnapshotSettings(Update = SnapshotUpdate.Missing)]
     public void UsesArgumentsToSeparateCases(string label, int count)
     {

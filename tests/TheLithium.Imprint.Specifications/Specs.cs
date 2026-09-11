@@ -21,6 +21,7 @@ public static partial class Specs
         (nameof(NullableAndEnums), Check.Sync(NullableAndEnums)),
         (nameof(BuiltInValues), Check.Sync(BuiltInValues)),
         (nameof(CaptureIsImmediate), Check.Sync(CaptureIsImmediate)),
+        (nameof(MissingDefaultsCreate), Check.Sync(MissingDefaultsCreate)),
         (nameof(MissingFails), Check.Sync(MissingFails)),
         (nameof(UpdateReplaces), Check.Sync(UpdateReplaces)),
         (nameof(MissingPolicyIsTransactional), Check.Sync(MissingPolicyIsTransactional)),
@@ -197,6 +198,15 @@ public static partial class Specs
         Check.True(error.Report.ArtifactDirectory is not null);
     }
 
+    private static void MissingDefaultsCreate()
+    {
+        using var f = new Fixture();
+        var report = f.Run(() => 1.AssertSnapshot("value"), SnapshotUpdate.Inherit);
+        Check.True(report.Success);
+        Check.Equal(SnapshotStatus.Created, report.Entries.Single().Status);
+        Check.Equal("1\n", File.ReadAllText(f.FilePath("value.json")));
+    }
+
     private static void UpdateReplaces()
     {
         using var f = new Fixture();
@@ -253,7 +263,10 @@ public static partial class Specs
     private static void ProjectConfiguration()
     {
         using var f = new Fixture();
-        f.Configure("{\"update\":\"all\",\"textExtension\":\"txt\"}");
+        f.Configure("{\"update\":\"all\",\"textExtension\":\"txt\",\"preferDisplayNames\":true}");
+        using var project = new EnvironmentValue("IMPRINT_PROJECT_ROOT", f.Root);
+        GeneratedFixtures.PreferredDisplayName();
+        Check.True(File.Exists(Path.Combine(f.Root, "__snapshots__", "Generated suite", "Readable generated display", "value.json")));
         f.Run(() => "text".AssertSnapshot("value"), SnapshotUpdate.Inherit);
         Check.True(File.Exists(f.FilePath("value.txt")));
     }

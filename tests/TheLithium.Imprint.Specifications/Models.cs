@@ -14,7 +14,8 @@ internal sealed class MutableState
 }
 internal sealed class Link
 {
-    public string Name { get; set; } = "node"; public Link? Next
+    public string Name { get; set; } = "node";
+    public Link? Next
     {
         get; set;
     }
@@ -39,6 +40,9 @@ internal static class GeneratedFixtures
 
     [SnapshotSettings(Name = "Readable method")]
     internal static void RenamedMethod() => Snapshots.Run(() => new { Value = 1 }.AssertSnapshot("value"));
+
+    [Xunit.Fact(DisplayName = "Readable generated display")]
+    internal static void PreferredDisplayName() => 1.AssertSnapshot("value");
 
     internal static void Parameterized(string name) => Snapshots.Run(() => name.AssertSnapshot("value"));
 
