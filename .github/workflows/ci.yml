@@ -36,9 +36,9 @@ jobs:
       - name: Pack
         run: dotnet pack -c Release --no-build
       - name: Test package consumers
-        run: dotnet test -c Release -p:UsePackageReferences=true --logger trx --results-directory artifacts/package-test-results
+        run: dotnet test -c Release -p:UsePackageReferences=true -p:RestorePackagesPath=artifacts/nuget/package-consumer --logger trx --results-directory artifacts/package-test-results
       - name: Publish package consumer as Native AOT
-        run: dotnet publish tests/TheLithium.Imprint.Specifications -c Release -r ${{ matrix.rid }} -p:UsePackageReferences=true -p:PublishAot=true -o artifacts/native/${{ matrix.rid }}
+        run: dotnet publish tests/TheLithium.Imprint.Specifications -c Release -r ${{ matrix.rid }} -p:UsePackageReferences=true -p:RestorePackagesPath=artifacts/nuget/package-consumer -p:PublishAot=true -p:SelfContained=true -o artifacts/native/${{ matrix.rid }}
       - name: Run native specifications
         run: ./artifacts/native/${{ matrix.rid }}/${{ matrix.executable }} --expect-aot
       - uses: actions/upload-artifact@v4
