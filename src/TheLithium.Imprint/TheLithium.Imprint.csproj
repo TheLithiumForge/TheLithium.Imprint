@@ -10,7 +10,17 @@
     <ProjectReference Include="../TheLithium.Imprint.Generator/TheLithium.Imprint.Generator.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" />
     <None Include="../../README.md" Pack="true" PackagePath="/" />
     <None Update="lib/net10.0/_._" Pack="true" PackagePath="lib/net10.0/_._" />
-    <None Include="../TheLithium.Imprint.Generator/bin/$(Configuration)/netstandard2.0/TheLithium.Imprint.Generator.dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
     <None Update="buildTransitive/TheLithium.Imprint.props" Pack="true" PackagePath="buildTransitive/TheLithium.Imprint.props" />
   </ItemGroup>
+  <Target Name="IncludeSnapshotGenerator" BeforeTargets="_GetPackageFiles">
+    <MSBuild Projects="../TheLithium.Imprint.Generator/TheLithium.Imprint.Generator.csproj"
+             Targets="GetTargetPath"
+             Properties="Configuration=$(Configuration)"
+             RemoveProperties="TargetFramework;RuntimeIdentifier;PublishAot;SelfContained">
+      <Output TaskParameter="TargetOutputs" ItemName="SnapshotGeneratorAssembly" />
+    </MSBuild>
+    <ItemGroup>
+      <None Include="@(SnapshotGeneratorAssembly)" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    </ItemGroup>
+  </Target>
 </Project>

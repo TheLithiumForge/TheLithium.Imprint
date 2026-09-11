@@ -4,7 +4,7 @@
     <IsPackable>false</IsPackable>
     <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
-    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/obj/generated</CompilerGeneratedFilesOutputPath>
+    <CompilerGeneratedFilesOutputPath>$(ArtifactsPath)/obj/$(MSBuildProjectName)/generated</CompilerGeneratedFilesOutputPath>
   </PropertyGroup>
   <ItemGroup Condition="'$(UsePackageReferences)' != 'true'">
     <ProjectReference Include="$(MSBuildThisFileDirectory)../src/TheLithium.Imprint.Core/TheLithium.Imprint.Core.csproj" />

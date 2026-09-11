@@ -8,6 +8,9 @@
     <Deterministic>true</Deterministic>
     <Version>0.1.0-preview.1</Version>
     <Authors>TheLithium</Authors>
+    <UseArtifactsOutput>true</UseArtifactsOutput>
+    <ArtifactsPath>$(MSBuildThisFileDirectory)artifacts</ArtifactsPath>
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/bin/**;**/obj/**</DefaultItemExcludes>
     <PackageOutputPath>$(MSBuildThisFileDirectory)artifacts/packages</PackageOutputPath>
     <RestorePackagesPath>$(MSBuildThisFileDirectory)artifacts/nuget</RestorePackagesPath>
     <NuGetAudit>true</NuGetAudit>
