@@ -7,11 +7,21 @@ namespace TheLithium.Imprint.Comparison;
 /// <summary>Structural JSON and text equality. No filtering, mutation or fuzzy approval.</summary>
 public sealed class DefaultSnapshotComparer : ISnapshotComparer
 {
+    /// <summary>Shared stateless comparer used when no custom comparer is supplied.</summary>
     public static DefaultSnapshotComparer Instance { get; } = new();
 
+    /// <summary>Compares canonical JSON or text according to the supplied equality rules.</summary>
+    /// <param name="expected">The stored baseline representation.</param>
+    /// <param name="received">The captured representation.</param>
+    /// <param name="format">The resolved representation format.</param>
+    /// <param name="options">Comparison rules for this entry.</param>
+    /// <returns>A match or a bounded human-readable difference.</returns>
     public SnapshotComparisonResult Compare(string expected, string received,
         SnapshotFormat format, SnapshotComparison options)
     {
+        ArgumentNullException.ThrowIfNull(expected);
+        ArgumentNullException.ThrowIfNull(received);
+        ArgumentNullException.ThrowIfNull(options);
         Settings.ValidateComparison(options);
         if (format is SnapshotFormat.Snap or SnapshotFormat.Text)
         {
@@ -144,9 +154,11 @@ public sealed class DefaultSnapshotComparer : ISnapshotComparer
                 }
                 return null;
             case JsonValueKind.String:
-                return string.Equals(left.GetString(), right.GetString(), options.IgnoreStringCase
+                var leftText = left.GetString() ?? string.Empty;
+                var rightText = right.GetString() ?? string.Empty;
+                return string.Equals(leftText, rightText, options.IgnoreStringCase
                     ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
-                    ? null : path + ": expected " + Excerpt(left.GetString()!) + ", received " + Excerpt(right.GetString()!) + ".";
+                    ? null : path + ": expected " + Excerpt(leftText) + ", received " + Excerpt(rightText) + ".";
             case JsonValueKind.Number:
                 return NumbersEqual(left.GetRawText(), right.GetRawText(), options.NumericTolerance)
                     ? null : path + ": expected " + Excerpt(left.GetRawText()) + ", received " + Excerpt(right.GetRawText()) + ".";

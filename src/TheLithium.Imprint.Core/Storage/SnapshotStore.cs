@@ -80,10 +80,10 @@ internal sealed class SnapshotStore
             DurableWrite(Path.Combine(_journal, "before.fingerprint"), current.Fingerprint);
             _settings.Cancellation.ThrowIfCancellationRequested();
             // No baseline mutation is allowed before this marker has been flushed.
-            DurableWrite(Path.Combine(_journal, "prepared"), "TheLithium.Imprint/1\n");
+            DurableWrite(Path.Combine(_journal, "prepared"), SnapshotProtocol.JournalMarker);
             // Do not interrupt this small commit section with cancellation. Finish or roll back.
             Apply(desired);
-            DurableWrite(Path.Combine(_journal, "committed"), "TheLithium.Imprint/1\n");
+            DurableWrite(Path.Combine(_journal, "committed"), SnapshotProtocol.JournalMarker);
         }
         catch (Exception error)
         {
@@ -139,7 +139,7 @@ internal sealed class SnapshotStore
         foreach (var path in Directory.EnumerateFiles(directory))
         {
             var name = Path.GetFileName(path);
-            if (!IsSnapshotFile(name))
+            if (!SnapshotFileNames.IsSnapshotFile(name))
             {
                 continue;
             }
@@ -182,7 +182,7 @@ internal sealed class SnapshotStore
 
         if (File.Exists(Path.Combine(_journal, "committed")))
         {
-            if (ReadText(Path.Combine(_journal, "committed"), 128) != "TheLithium.Imprint/1\n")
+            if (ReadText(Path.Combine(_journal, "committed"), 128) != SnapshotProtocol.JournalMarker)
             {
                 throw new SnapshotConflictException("Unrecognized snapshot journal version: " + _journal);
             }
@@ -203,7 +203,7 @@ internal sealed class SnapshotStore
                     "Run locally with writes enabled before verification: " + _journal);
             }
 
-            if (ReadText(Path.Combine(_journal, "prepared"), 128) != "TheLithium.Imprint/1\n"
+            if (ReadText(Path.Combine(_journal, "prepared"), 128) != SnapshotProtocol.JournalMarker
                 || !Directory.Exists(Path.Combine(_journal, "before"))
                 || !File.Exists(Path.Combine(_journal, "before.fingerprint")))
             {
@@ -232,7 +232,7 @@ internal sealed class SnapshotStore
         foreach (var path in Directory.EnumerateFiles(_settings.TestDirectory))
         {
             var name = Path.GetFileName(path);
-            if (IsSnapshotFile(name) && !files.ContainsKey(name))
+            if (SnapshotFileNames.IsSnapshotFile(name) && !files.ContainsKey(name))
             {
                 CheckLink(path);
                 File.Delete(path);
@@ -342,7 +342,9 @@ internal sealed class SnapshotStore
     private static void AtomicWrite(string path, string text)
     {
         CheckLink(path);
-        var temporary = Path.Combine(Path.GetDirectoryName(path) ?? throw new SnapshotConfigurationException("The snapshot path has no parent directory."), ".imprint-tmp-" + Guid.NewGuid().ToString("N"));
+        var directory = Path.GetDirectoryName(path)
+            ?? throw new SnapshotConfigurationException("The snapshot path has no parent directory.");
+        var temporary = Path.Combine(directory, ".imprint-tmp-" + Guid.NewGuid().ToString("N"));
         try
         {
             DurableWrite(temporary, text);
@@ -374,10 +376,9 @@ internal sealed class SnapshotStore
         hash.AppendData(bytes);
     }
 
-    internal static bool IsSnapshotFile(string file) => Path.GetExtension(file).ToLowerInvariant() is ".json" or ".snap" or ".txt";
     private static void ValidateFileName(string file)
     {
-        if (file != Path.GetFileName(file) || !IsSnapshotFile(file))
+        if (file != Path.GetFileName(file) || !SnapshotFileNames.IsSnapshotFile(file))
         {
             throw new SnapshotConfigurationException("Invalid snapshot filename in a storage operation.");
         }

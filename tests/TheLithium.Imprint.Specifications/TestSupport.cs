@@ -11,7 +11,12 @@ internal sealed class Fixture : IDisposable
     internal SnapshotTestOptions Options(SnapshotUpdate update = SnapshotUpdate.Verify, string test = "Example")
         => new()
         {
-            Identity = new(Root, Path.Combine(Root, "Fixture.cs"), "Suite", test, LogicalId: "TheLithium.Imprint.Specifications/" + test),
+            Identity = new SnapshotTestIdentity(
+                ProjectDirectory: Root,
+                SourceFile: Path.Combine(Root, "Fixture.cs"),
+                Suite: "Suite",
+                Test: test,
+                LogicalId: "TheLithium.Imprint.Specifications/" + test),
             Update = update
         };
     internal SnapshotReport Run(Action body, SnapshotUpdate update = SnapshotUpdate.Verify, string test = "Example")

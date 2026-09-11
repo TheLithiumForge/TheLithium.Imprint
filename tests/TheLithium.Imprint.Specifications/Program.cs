@@ -74,7 +74,12 @@ internal static class Program
     {
         using var scope = Snapshots.Begin(new()
         {
-            Identity = new(directory, Path.Combine(directory, "Fixture.cs"), "Suite", "Example", LogicalId: "TheLithium.Imprint.Specifications/Example"),
+            Identity = new SnapshotTestIdentity(
+                ProjectDirectory: directory,
+                SourceFile: Path.Combine(directory, "Fixture.cs"),
+                Suite: "Suite",
+                Test: "Example",
+                LogicalId: "TheLithium.Imprint.Specifications/Example"),
             Update = SnapshotUpdate.All
         });
         1.AssertSnapshot("value");

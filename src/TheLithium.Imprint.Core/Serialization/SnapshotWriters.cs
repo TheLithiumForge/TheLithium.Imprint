@@ -64,8 +64,15 @@ public static class SnapshotWriters
     /// <summary>Infers anonymous shapes without naming them or reflecting over them.</summary>
     public static void TryRegister<T>(T shape, SnapshotWriter<T> writer) => TryRegister(writer);
 
+    /// <summary>Writes one value through the generated or explicitly registered writer for its static type.</summary>
+    /// <typeparam name="T">The static type used to select the writer.</typeparam>
+    /// <param name="writer">The open JSON destination.</param>
+    /// <param name="value">The value to write.</param>
+    /// <param name="context">The active path, cycle, and budget context.</param>
     public static void Write<T>(Utf8JsonWriter writer, T value, SnapshotWriteContext context)
     {
+        ArgumentNullException.ThrowIfNull(writer);
+        ArgumentNullException.ThrowIfNull(context);
         using var frame = context.Enter(value);
         if (value is null)
         {

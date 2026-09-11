@@ -28,8 +28,17 @@ public static partial class Specs
         (nameof(CustomComparerFailureCannotBeApproved), Check.Sync(CustomComparerFailureCannotBeApproved)),
         (nameof(UnorderedArraysPreserveMultiplicity), Check.Sync(UnorderedArraysPreserveMultiplicity)),
         (nameof(VerifyDoesNotRewriteBaselines), Check.Sync(VerifyDoesNotRewriteBaselines)),
+        (nameof(PublicContractsRejectNullAtIngress), Check.Sync(PublicContractsRejectNullAtIngress)),
         (nameof(ConcurrentWritersInSeparateProcesses), ConcurrentWritersInSeparateProcesses)
     ];
+
+    private static void PublicContractsRejectNullAtIngress()
+    {
+        Check.Throws<ArgumentNullException>(() => new SnapshotTestIdentity(null!, "source.cs", "Suite", "Test"));
+        Check.Throws<ArgumentNullException>(() => new SnapshotEntryResult(null!, "value.json", SnapshotStatus.Matched));
+        Check.Throws<ArgumentNullException>(() => new SnapshotReport("Suite.Test", true, null!));
+        Check.Throws<ArgumentNullException>(() => new SnapshotException(null!));
+    }
 
     private static void TextDiffIncludesContext()
     {

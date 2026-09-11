@@ -37,12 +37,16 @@ public sealed class SnapshotScope : IDisposable
         _baseline = _store.Read();
     }
 
+    /// <summary>Absolute directory containing this test's baseline files.</summary>
     public string BaselineDirectory => _settings.TestDirectory;
+    /// <summary>Fingerprint read when the scope began.</summary>
     public string BaselineFingerprint => _baseline.Fingerprint;
+    /// <summary>Failure-artifact directory created when execution aborts or comparison fails.</summary>
     public string? ArtifactDirectory
     {
         get; private set;
     }
+    /// <summary>Effective whole-test policy after environment and read-only enforcement.</summary>
     public SnapshotUpdate EffectiveUpdate => _settings.ResolveUpdate(SnapshotUpdate.Inherit, _update);
 
     /// <summary>Session-local. Must be set before the first capture.</summary>
@@ -98,12 +102,7 @@ public sealed class SnapshotScope : IDisposable
                     throw new SnapshotCaptureException("The captured test set exceeds its total size budget.");
                 }
 
-                var extension = encoded.Format switch
-                {
-                    SnapshotFormat.Json => ".json",
-                    SnapshotFormat.Text => ".txt",
-                    _ => ".snap"
-                };
+                var extension = SnapshotFileNames.Extension(encoded.Format);
                 _values.Add(new(name, name + extension, encoded.Text, encoded.Format,
                     options.Update, comparison, options.Comparer));
             }
@@ -155,7 +154,8 @@ public sealed class SnapshotScope : IDisposable
         return candidate;
     }
 
-    /// <summary>Compares all entries and only commits if all differences are authorized.</summary>
+    /// <summary>Compares all captures and commits authorized staged changes.</summary>
+    /// <returns>A report containing every captured and unused entry.</returns>
     public SnapshotReport Complete()
     {
         lock (_gate)
@@ -301,7 +301,8 @@ public sealed class SnapshotScope : IDisposable
         }
     }
 
-    /// <summary>Abandons approval and preserves the original test exception.</summary>
+    /// <summary>Abandons the scope and preserves the original test exception when supplied.</summary>
+    /// <param name="error">The exception that caused the test to abort.</param>
     public void Abort(Exception? error = null)
     {
         lock (_gate)
@@ -348,6 +349,7 @@ public sealed class SnapshotScope : IDisposable
         }
     }
 
+    /// <summary>Closes the scope; an open or failed scope is abandoned without approval.</summary>
     public void Dispose()
     {
         lock (_gate)

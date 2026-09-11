@@ -16,14 +16,22 @@ public sealed class SnapshotWriteContext
     internal SnapshotWriteContext(int maxDepth, int maxNodes, CancellationToken cancellation)
         => (_maxDepth, _maxNodes, _cancellation) = (maxDepth, maxNodes, cancellation);
 
+    /// <summary>JSON-style member path for the value currently being written.</summary>
     public string Path => "$" + string.Concat(_path);
 
+    /// <summary>Pushes a named member onto the current error path.</summary>
+    /// <param name="member">The member name.</param>
+    /// <returns>A disposable frame that restores the previous path.</returns>
     public IDisposable At(string member)
     {
+        ArgumentNullException.ThrowIfNull(member);
         _path.Add("[\"" + member.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"]");
         return new PathFrame(this);
     }
 
+    /// <summary>Pushes an array index onto the current error path.</summary>
+    /// <param name="index">The zero-based array index.</param>
+    /// <returns>A disposable frame that restores the previous path.</returns>
     public IDisposable At(int index)
     {
         _path.Add("[" + index.ToString(CultureInfo.InvariantCulture) + "]");

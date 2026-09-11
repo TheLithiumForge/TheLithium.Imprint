@@ -11,6 +11,7 @@ public static class SnapshotMetadata
 
     public static void Register(string file, int firstLine, int lastLine, SnapshotDescriptor descriptor)
     {
+        ArgumentNullException.ThrowIfNull(file);
         ArgumentNullException.ThrowIfNull(descriptor);
         var list = Files.GetOrAdd(Normalize(file), static _ => new());
         lock (list)

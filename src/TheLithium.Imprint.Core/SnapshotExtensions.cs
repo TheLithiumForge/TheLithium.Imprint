@@ -12,7 +12,7 @@ public static class SnapshotExtensions
     /// <param name="options">Optional format, equality, or update overrides for this entry.</param>
     /// <param name="expression">Compiler-supplied expression for name inference. Normally omit this argument.</param>
     /// <remarks>
-    /// Missing snapshots pass and are created on successful completion. Existing differences produce an aggregate diff.
+    /// Under the default Missing policy, missing snapshots pass and are created on successful completion. Existing differences produce an aggregate diff.
     /// A later exception, including in an awaited finally block, discards staged changes.
     /// The package establishes the lifetime during compilation. Framework teardown outside the method is outside that lifetime.
     /// </remarks>

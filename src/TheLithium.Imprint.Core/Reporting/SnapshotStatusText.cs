@@ -11,6 +11,6 @@ internal static class SnapshotStatusText
         SnapshotStatus.Created => "Created",
         SnapshotStatus.Updated => "Updated",
         SnapshotStatus.Removed => "Removed",
-        _ => "Unknown"
+        _ => throw new ArgumentOutOfRangeException(nameof(value), value, "Unknown snapshot status.")
     };
 }

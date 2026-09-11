@@ -176,7 +176,7 @@ internal static class Settings
         using (var writer = new Utf8JsonWriter(stream))
         {
             writer.WriteStartArray();
-            writer.WriteStringValue("TheLithium.Imprint/1");
+            writer.WriteStringValue(SnapshotProtocol.Version);
             writer.WriteStringValue(identity.LogicalId);
             writer.WriteStringValue(identity.Case);
             writer.WriteStringValue(identity.Variant);
