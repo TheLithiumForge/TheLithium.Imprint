@@ -206,7 +206,8 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
                 update = ClassUpdate(method.ContainingType);
             }
 
-            var requiresCase = method.Parameters.Length != 0 || method.TypeParameters.Length != 0 || method.ContainingType.IsGenericType;
+            var requiresCase = method.Parameters.Any(parameter => parameter.Type.ToDisplayString() != "System.Threading.CancellationToken")
+                || method.TypeParameters.Length != 0 || method.ContainingType.IsGenericType;
             body.Append("            global::TheLithium.Imprint.Generation.SnapshotMetadata.Register(")
                 .Append(Literal(file)).Append(", ")
                 .Append(firstLine).Append(", ")
@@ -321,7 +322,27 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
                     break;
                 }
             }
-            if (!framework)
+            var descriptionAttribute = type?.ToDisplayString() == "System.ComponentModel.DescriptionAttribute";
+            var namedDisplayMetadata = attribute.NamedArguments.Any(argument =>
+                (argument.Key == "DisplayName" || argument.Key == "Description")
+                && argument.Value.Value is string value && !string.IsNullOrWhiteSpace(value));
+            var constructorDisplayMetadata = false;
+            if (attribute.AttributeConstructor is { } constructor)
+            {
+                for (var index = 0; index < constructor.Parameters.Length; index++)
+                {
+                    if (constructor.Parameters[index].Name is "displayName" or "description"
+                        && index < attribute.ConstructorArguments.Length
+                        && attribute.ConstructorArguments[index].Value is string value
+                        && !string.IsNullOrWhiteSpace(value))
+                    {
+                        constructorDisplayMetadata = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!framework && !descriptionAttribute && !namedDisplayMetadata && !constructorDisplayMetadata)
             {
                 continue;
             }
@@ -339,7 +360,7 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
             {
                 for (var index = 0; index < attribute.AttributeConstructor.Parameters.Length; index++)
                 {
-                    if (attribute.AttributeConstructor.Parameters[index].Name == "displayName"
+                    if (attribute.AttributeConstructor.Parameters[index].Name is "displayName" or "description"
                         && index < attribute.ConstructorArguments.Length
                         && attribute.ConstructorArguments[index].Value is string displayName
                         && !string.IsNullOrWhiteSpace(displayName))
@@ -349,7 +370,7 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
                 }
             }
 
-            if (type?.Name == "DescriptionAttribute" && attribute.ConstructorArguments.Length == 1
+            if (descriptionAttribute && attribute.ConstructorArguments.Length == 1
                 && attribute.ConstructorArguments[0].Value is string description)
             {
                 return description;

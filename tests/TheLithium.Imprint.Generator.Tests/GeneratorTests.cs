@@ -112,6 +112,14 @@ public sealed class GeneratorTests
     }
 
     [Fact]
+    public void CancellationTokenDoesNotRequireCaseIdentity()
+    {
+        var result = Generate("using TheLithium.Imprint; using System.Threading; public class Tests { public void Test(CancellationToken token) => Snapshots.Run(() => 1.AssertSnapshot()); }");
+        Assert.Empty(result.Errors);
+        Assert.Contains("SnapshotUpdate)0, false", result.Source);
+    }
+
+    [Fact]
     public void EnumAliasesDoNotGenerateDuplicateCases()
     {
         var result = Generate("using TheLithium.Imprint; public enum State { A=0, B=0, C=1 } public class Tests { public void Test() => Snapshots.Run(() => State.B.AssertSnapshot()); }");
@@ -171,7 +179,7 @@ public sealed class GeneratorTests
             }
             """);
         Assert.Empty(result.Errors);
-        Assert.Contains("\"Custom scenario\"", result.Source);
+        Assert.True(result.Source.Contains("\"Custom scenario\"", StringComparison.Ordinal), result.Source);
         Assert.Contains("\"Tests\", \"Test\"", result.Source);
     }
 
@@ -208,6 +216,46 @@ public sealed class GeneratorTests
             """);
         Assert.Empty(result.Errors);
         Assert.Contains("\"Legacy display name\"", result.Source);
+        Assert.Contains("\"Tests\", \"Test\"", result.Source);
+    }
+
+    [Fact]
+    public void DescriptionAttributeIsKeptAsAnOptInName()
+    {
+        var result = Generate("""
+            using TheLithium.Imprint;
+            using System.ComponentModel;
+            public class Tests
+            {
+                [Description("Readable description")]
+                public void Test() => Snapshots.Run(() => 1.AssertSnapshot());
+            }
+            """);
+        Assert.Empty(result.Errors);
+        Assert.Contains("\"Readable description\"", result.Source);
+        Assert.Contains("\"Tests\", \"Test\"", result.Source);
+    }
+
+    [Fact]
+    public void UnknownFrameworkDisplayMetadataIsKeptAsAnOptInName()
+    {
+        var result = Generate("""
+            using TheLithium.Imprint;
+            namespace Other.Framework
+            {
+                public sealed class ScenarioAttribute : System.Attribute
+                {
+                    public string? DisplayName { get; set; }
+                }
+            }
+            public class Tests
+            {
+                [Other.Framework.Scenario(DisplayName = "Custom scenario")]
+                public void Test() => Snapshots.Run(() => 1.AssertSnapshot());
+            }
+            """);
+        Assert.Empty(result.Errors);
+        Assert.True(result.Source.Contains("\"Custom scenario\"", StringComparison.Ordinal), result.Source);
         Assert.Contains("\"Tests\", \"Test\"", result.Source);
     }
 
