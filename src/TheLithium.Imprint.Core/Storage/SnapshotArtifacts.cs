@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace TheLithium.Imprint;
+namespace TheLithium.Imprint.Storage;
 
 internal static class SnapshotArtifacts
 {
@@ -39,7 +39,11 @@ internal static class SnapshotArtifacts
         writer.WriteString("test", settings.DisplayName);
         writer.WriteString("baselineDirectory", settings.TestDirectory);
         writer.WriteString("baselineFingerprint", baseline.Fingerprint);
-        if (error is not null) writer.WriteString("error", error);
+        if (error is not null)
+        {
+            writer.WriteString("error", error);
+        }
+
         writer.WriteStartArray("entries");
         foreach (var entry in entries)
         {
@@ -47,26 +51,15 @@ internal static class SnapshotArtifacts
             writer.WriteString("name", entry.Name);
             writer.WriteString("file", entry.FileName);
             writer.WriteString("status", SnapshotStatusText.Format(entry.Status));
-            if (entry.Difference is not null) writer.WriteString("difference", entry.Difference);
+            if (entry.Difference is not null)
+            {
+                writer.WriteString("difference", entry.Difference);
+            }
+
             writer.WriteEndObject();
         }
         writer.WriteEndArray();
         writer.WriteEndObject();
         return directory;
     }
-}
-
-internal static class SnapshotStatusText
-{
-    internal static string Format(SnapshotStatus value) => value switch
-    {
-        SnapshotStatus.Matched => "Matched",
-        SnapshotStatus.Missing => "Missing",
-        SnapshotStatus.Changed => "Changed",
-        SnapshotStatus.Unused => "Unused",
-        SnapshotStatus.Created => "Created",
-        SnapshotStatus.Updated => "Updated",
-        SnapshotStatus.Removed => "Removed",
-        _ => "Unknown"
-    };
 }

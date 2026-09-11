@@ -19,7 +19,10 @@ internal sealed class Fixture : IDisposable
     internal void Configure(string json) => File.WriteAllText(Path.Combine(Root, "snapshots.config.json"), json);
     public void Dispose()
     {
-        try { Directory.Delete(Root, recursive: true); }
+        try
+        {
+            Directory.Delete(Root, recursive: true);
+        }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
     }
@@ -42,21 +45,33 @@ internal static class Check
 {
     internal static void True(bool condition, string message = "Assertion failed.")
     {
-        if (!condition) throw new Exception(message);
+        if (!condition)
+        {
+            throw new Exception(message);
+        }
     }
     internal static void Equal<T>(T expected, T actual)
     {
-        if (!EqualityComparer<T>.Default.Equals(expected, actual)) throw new Exception("Values differ.");
+        if (!EqualityComparer<T>.Default.Equals(expected, actual))
+        {
+            throw new Exception("Values differ.");
+        }
     }
     internal static T Throws<T>(Action action) where T : Exception
     {
-        try { action(); }
+        try
+        {
+            action();
+        }
         catch (T error) { return error; }
         throw new Exception("The expected exception was not thrown.");
     }
     internal static async Task<T> ThrowsAsync<T>(Func<Task> action) where T : Exception
     {
-        try { await action(); }
+        try
+        {
+            await action();
+        }
         catch (T error) { return error; }
         throw new Exception("The expected exception was not thrown.");
     }

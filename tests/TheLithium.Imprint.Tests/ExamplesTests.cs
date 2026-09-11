@@ -5,37 +5,50 @@ namespace TheLithium.Imprint.Tests;
 public sealed class ExamplesTests
 {
     [Fact(DisplayName = "An order has structured data and readable output")]
-    public void Order() => Snapshots.Run(() =>
+    public void Order()
     {
-        var order = new { Id = "order-123", Total = 42.50m, Items = new[] { "Keyboard", "Cable" } };
-        order.Snapshot();
-        order.Items.Snapshot("items");
-        "Order created\nReady for dispatch\n".Snapshot("output");
-        Assert.EndsWith(Path.Combine(nameof(ExamplesTests), "An order has structured data and readable output"), Snapshots.Current.BaselineDirectory);
+        var order = new
+        {
+            Id = "order-123",
+            Total = 42.50m,
+            Items = new[] { "Keyboard", "Cable" }
+        };
+        order.AssertSnapshot();
+        order.Items.AssertSnapshot("items");
+        "Order created\nReady for dispatch\n".AssertSnapshot("output");
+        Assert.EndsWith(Path.Combine(nameof(ExamplesTests), nameof(Order)), Snapshots.Current.BaselineDirectory);
         Assert.Equal(42.50m, order.Total);
-    });
+    }
 
     [Fact]
-    public Task AsyncTest() => Snapshots.RunAsync(async () =>
+    public async Task AsyncTest()
     {
         await Task.Yield();
-        var state = new { Status = "complete", Count = 2 };
-        state.Snapshot();
-    });
+        var state = new
+        {
+            Status = "complete",
+            Count = 2
+        };
+        state.AssertSnapshot();
+    }
 
     [Theory]
     [InlineData("first", 1)]
     [InlineData("second", 2)]
-    public void Parameterized(string caseName, int count) => Snapshots.Run(() =>
+    public void Parameterized(string caseName, int count)
     {
-        new { Count = count }.Snapshot("result");
-    }, new() { Case = caseName });
+        _ = caseName;
+        new
+        {
+            Count = count
+        }.AssertSnapshot("result");
+    }
 
     [Fact(DisplayName = "Framework name")]
     [SnapshotSettings(Name = "Explicit snapshot name")]
-    public void ExplicitNameWins() => Snapshots.Run(() =>
+    public void ExplicitNameWins()
     {
         Assert.EndsWith("Explicit snapshot name", Snapshots.Current.BaselineDirectory);
-        true.Snapshot("value");
-    });
+        true.AssertSnapshot("value");
+    }
 }

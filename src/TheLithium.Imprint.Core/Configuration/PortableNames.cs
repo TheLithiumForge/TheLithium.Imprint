@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace TheLithium.Imprint;
+namespace TheLithium.Imprint.Configuration;
 
 internal static class PortableNames
 {
@@ -15,36 +15,68 @@ internal static class PortableNames
     internal static string Segment(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
+        {
             throw new SnapshotConfigurationException("Snapshot names cannot be empty or whitespace.");
+        }
+
         var original = value;
         value = value.Normalize(NormalizationForm.FormC);
         var builder = new StringBuilder(value.Length);
         foreach (var ch in value)
+        {
             builder.Append(ch < 32 || ch == 127 || "<>:\"/\\|?*".Contains(ch) ? '_' : ch);
+        }
+
         var safe = builder.ToString().TrimEnd(' ', '.');
-        if (safe is "" or "." or "..") safe = "snapshot";
-        if (Devices.Contains(safe.Split('.')[0])) safe = "_" + safe;
+        if (safe is "" or "." or "..")
+        {
+            safe = "snapshot";
+        }
+
+        if (Devices.Contains(safe.Split('.')[0]))
+        {
+            safe = "_" + safe;
+        }
+
         if (safe.Length > 96)
         {
             var length = char.IsHighSurrogate(safe[95]) ? 95 : 96;
             safe = safe[..length];
         }
         if (!string.Equals(safe, original, StringComparison.Ordinal))
+        {
             safe += "~" + Hash(original)[..16];
+        }
+
         return safe;
     }
 
     internal static string? Infer(string? expression)
     {
-        if (string.IsNullOrWhiteSpace(expression)) return null;
+        if (string.IsNullOrWhiteSpace(expression))
+        {
+            return null;
+        }
+
         var text = expression.Trim().TrimEnd('!');
         var parts = text.Split('.');
         foreach (var raw in parts)
         {
             var part = raw.Trim();
-            if (part.StartsWith('@')) part = part[1..];
-            if (part.Length == 0 || !(char.IsLetter(part[0]) || part[0] == '_')) return null;
-            if (part.Skip(1).Any(c => !char.IsLetterOrDigit(c) && c != '_')) return null;
+            if (part.StartsWith('@'))
+            {
+                part = part[1..];
+            }
+
+            if (part.Length == 0 || !(char.IsLetter(part[0]) || part[0] == '_'))
+            {
+                return null;
+            }
+
+            if (part.Skip(1).Any(c => !char.IsLetterOrDigit(c) && c != '_'))
+            {
+                return null;
+            }
         }
         var name = parts[^1].Trim().TrimStart('@');
         return name is "null" or "true" or "false" or "this" or "base" or "default" ? null : name;
@@ -55,12 +87,31 @@ internal static class PortableNames
         int p = 0, t = 0, star = -1, retry = 0;
         while (t < text.Length)
         {
-            if (p < pattern.Length && (pattern[p] == '?' || pattern[p] == text[t])) { p++; t++; }
-            else if (p < pattern.Length && pattern[p] == '*') { star = p++; retry = t; }
-            else if (star >= 0) { p = star + 1; t = ++retry; }
-            else return false;
+            if (p < pattern.Length && (pattern[p] == '?' || pattern[p] == text[t]))
+            {
+                p++;
+                t++;
+            }
+            else if (p < pattern.Length && pattern[p] == '*')
+            {
+                star = p++;
+                retry = t;
+            }
+            else if (star >= 0)
+            {
+                p = star + 1;
+                t = ++retry;
+            }
+            else
+            {
+                return false;
+            }
         }
-        while (p < pattern.Length && pattern[p] == '*') p++;
+        while (p < pattern.Length && pattern[p] == '*')
+        {
+            p++;
+        }
+
         return p == pattern.Length;
     }
 }

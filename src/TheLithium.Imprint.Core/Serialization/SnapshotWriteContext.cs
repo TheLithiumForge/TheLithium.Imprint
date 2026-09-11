@@ -34,11 +34,20 @@ public sealed class SnapshotWriteContext
     {
         _cancellation.ThrowIfCancellationRequested();
         if (++_nodes > _maxNodes)
+        {
             throw new SnapshotCaptureException($"Snapshot node budget exceeded at {Path}.");
+        }
+
         if (_depth + 1 > _maxDepth)
+        {
             throw new SnapshotCaptureException($"Snapshot depth budget exceeded at {Path}.");
+        }
+
         if (value is not null && !_active.Add(value))
+        {
             throw new SnapshotCaptureException($"Reference cycle detected at {Path}.");
+        }
+
         _depth++;
         return new ValueFrame(this, value);
     }
@@ -48,10 +57,17 @@ public sealed class SnapshotWriteContext
         private bool _disposed;
         public void Dispose()
         {
-            if (_disposed) return;
+            if (_disposed)
+            {
+                return;
+            }
+
             _disposed = true;
             owner._depth--;
-            if (value is not null) owner._active.Remove(value);
+            if (value is not null)
+            {
+                owner._active.Remove(value);
+            }
         }
     }
 
@@ -60,7 +76,11 @@ public sealed class SnapshotWriteContext
         private bool _disposed;
         public void Dispose()
         {
-            if (_disposed) return;
+            if (_disposed)
+            {
+                return;
+            }
+
             _disposed = true;
             owner._path.RemoveAt(owner._path.Count - 1);
         }

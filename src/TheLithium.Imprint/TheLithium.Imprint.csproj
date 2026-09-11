@@ -8,9 +8,11 @@
   <ItemGroup>
     <ProjectReference Include="../TheLithium.Imprint.Core/TheLithium.Imprint.Core.csproj" />
     <ProjectReference Include="../TheLithium.Imprint.Generator/TheLithium.Imprint.Generator.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" />
+    <ProjectReference Include="../TheLithium.Imprint.Build/TheLithium.Imprint.Build.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" />
     <None Include="../../README.md" Pack="true" PackagePath="/" />
     <None Update="lib/net10.0/_._" Pack="true" PackagePath="lib/net10.0/_._" />
     <None Update="buildTransitive/TheLithium.Imprint.props" Pack="true" PackagePath="buildTransitive/TheLithium.Imprint.props" />
+    <None Update="buildTransitive/TheLithium.Imprint.targets" Pack="true" PackagePath="buildTransitive/TheLithium.Imprint.targets" />
   </ItemGroup>
   <Target Name="IncludeSnapshotGenerator" BeforeTargets="_GetPackageFiles">
     <MSBuild Projects="../TheLithium.Imprint.Generator/TheLithium.Imprint.Generator.csproj"
@@ -21,6 +23,18 @@
     </MSBuild>
     <ItemGroup>
       <None Include="@(SnapshotGeneratorAssembly)" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    </ItemGroup>
+  </Target>
+  <Target Name="IncludeSnapshotBuildTask" BeforeTargets="_GetPackageFiles">
+    <MSBuild Projects="../TheLithium.Imprint.Build/TheLithium.Imprint.Build.csproj"
+             Targets="GetTargetPath"
+             Properties="Configuration=$(Configuration)"
+             RemoveProperties="TargetFramework;RuntimeIdentifier;PublishAot;SelfContained">
+      <Output TaskParameter="TargetOutputs" ItemName="SnapshotBuildAssembly" />
+    </MSBuild>
+    <ItemGroup>
+      <SnapshotBuildPayload Include="@(SnapshotBuildAssembly->'%(RootDir)%(Directory)*.dll')" />
+      <None Include="@(SnapshotBuildPayload)" Pack="true" PackagePath="tasks/netstandard2.0" Visible="false" />
     </ItemGroup>
   </Target>
 </Project>

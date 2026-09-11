@@ -5,4 +5,8 @@
     <IlcTreatWarningsAsErrors>true</IlcTreatWarningsAsErrors>
     <ILLinkTreatWarningsAsErrors>true</ILLinkTreatWarningsAsErrors>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- Engine specifications deliberately open and fail explicit integration lifetimes. -->
+    <Compile Update="Specs.cs;AdditionalSpecs.cs" ImprintInstrument="false" />
+  </ItemGroup>
 </Project>

@@ -27,9 +27,23 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
         internal readonly MethodDeclarationSyntax? Declaration;
         internal readonly IMethodSymbol? Caller;
         internal readonly bool IsBoundary;
+        internal string? OriginalFile
+        {
+            get; set;
+        }
+        internal int? OriginalLine
+        {
+            get; set;
+        }
         internal Candidate(InvocationExpressionSyntax syntax, ITypeSymbol? root,
             MethodDeclarationSyntax? declaration, IMethodSymbol? caller, bool boundary)
-        { Syntax = syntax; Root = root; Declaration = declaration; Caller = caller; IsBoundary = boundary; }
+        {
+            Syntax = syntax;
+            Root = root;
+            Declaration = declaration;
+            Caller = caller;
+            IsBoundary = boundary;
+        }
     }
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
@@ -44,61 +58,116 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
             var compilation = input.Left.Right;
             input.Right.GlobalOptions.TryGetValue("build_property.MSBuildProjectDirectory", out var project);
             input.Right.GlobalOptions.TryGetValue("build_property.MSBuildProjectName", out var projectName);
-            Generate(output, compilation, candidates, project ?? "", projectName ?? compilation.AssemblyName ?? "Tests");
+            input.Right.GlobalOptions.TryGetValue("build_property.ArtifactsPath", out var artifacts);
+            Generate(output, compilation, candidates, project ?? "", projectName ?? compilation.AssemblyName ?? "Tests", artifacts);
         });
     }
 
     private static bool IsCandidate(SyntaxNode node)
     {
-        if (!(node is InvocationExpressionSyntax invocation)) return false;
+        if (!(node is InvocationExpressionSyntax invocation))
+        {
+            return false;
+        }
+
         var name = Name(invocation.Expression);
-        return name == "Snapshot" || name == "Run" || name == "RunAsync" || name == "Begin" || name == "Write";
+        return name == "Snapshot" || name == "AssertSnapshot" || name == "UpdateSnapshot" || name == "Create"
+            || name == "Run" || name == "RunAsync" || name == "RunValueTask" || name == "Begin" || name == "Write";
     }
 
     private static string Name(ExpressionSyntax expression)
     {
-        if (expression is MemberAccessExpressionSyntax member) return member.Name.Identifier.ValueText;
-        if (expression is MemberBindingExpressionSyntax binding) return binding.Name.Identifier.ValueText;
-        if (expression is SimpleNameSyntax simple) return simple.Identifier.ValueText;
+        if (expression is MemberAccessExpressionSyntax member)
+        {
+            return member.Name.Identifier.ValueText;
+        }
+
+        if (expression is MemberBindingExpressionSyntax binding)
+        {
+            return binding.Name.Identifier.ValueText;
+        }
+
+        if (expression is SimpleNameSyntax simple)
+        {
+            return simple.Identifier.ValueText;
+        }
+
         return "";
     }
 
     private static Candidate? Inspect(GeneratorSyntaxContext context, CancellationToken token)
     {
         var syntax = (InvocationExpressionSyntax)context.Node;
-        if (!(context.SemanticModel.GetSymbolInfo(syntax, token).Symbol is IMethodSymbol method)) return null;
+        if (!(context.SemanticModel.GetSymbolInfo(syntax, token).Symbol is IMethodSymbol method))
+        {
+            return null;
+        }
+
         var definition = method.ReducedFrom ?? method;
         var owner = definition.ContainingType.ToDisplayString();
         var boundary = owner == "TheLithium.Imprint.Snapshots" && (method.Name == "Run" || method.Name == "RunAsync" || method.Name == "Begin");
-        var capture = owner == "TheLithium.Imprint.SnapshotExtensions" && method.Name == "Snapshot";
+        boundary |= owner == "TheLithium.Imprint.Generation.TestExecution";
+        var capture = owner == "TheLithium.Imprint.SnapshotExtensions" && (method.Name == "Snapshot" || method.Name == "AssertSnapshot" || method.Name == "UpdateSnapshot");
         var explicitWrite = owner == "TheLithium.Imprint.SnapshotWriters" && method.Name == "Write";
-        if (!boundary && !capture && !explicitWrite) return null;
+        explicitWrite |= owner == "TheLithium.Imprint.Generation.SnapshotCases" && method.Name == "Create";
+        if (!boundary && !capture && !explicitWrite)
+        {
+            return null;
+        }
+
         var declaration = syntax.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault();
         var caller = declaration == null ? null : context.SemanticModel.GetDeclaredSymbol(declaration, token);
         ITypeSymbol? root = null;
         if ((capture || explicitWrite) && method.TypeArguments.Length == 1
             && !definition.Parameters.Any(p => p.Name == "writer" && capture))
+        {
             root = method.TypeArguments[0];
-        return new Candidate(syntax, root, declaration, caller, boundary);
+        }
+
+        var candidate = new Candidate(syntax, root, declaration, caller, boundary);
+        if (owner == "TheLithium.Imprint.Generation.TestExecution")
+        {
+            foreach (var argument in syntax.ArgumentList.Arguments)
+            {
+                var value = context.SemanticModel.GetConstantValue(argument.Expression, token);
+                if (argument.NameColon?.Name.Identifier.ValueText == "sourceFile" && value.Value is string originalFile)
+                {
+                    candidate.OriginalFile = originalFile;
+                }
+                if (argument.NameColon?.Name.Identifier.ValueText == "sourceLine" && value.Value is int originalLine)
+                {
+                    candidate.OriginalLine = originalLine;
+                }
+            }
+        }
+        return candidate;
     }
 
     private static void Generate(SourceProductionContext context, Compilation compilation,
-        ImmutableArray<Candidate?> calls, string project, string projectName)
+        ImmutableArray<Candidate?> calls, string project, string projectName, string? artifacts)
     {
         var engine = new WriterEmitter(context, compilation);
         foreach (var candidate in calls)
-            if (candidate?.Root != null) engine.Visit(candidate.Root, candidate.Syntax.GetLocation());
+        {
+            if (candidate?.Root != null)
+            {
+                engine.Visit(candidate.Root, candidate.Syntax.GetLocation());
+            }
+        }
+
         foreach (var attribute in compilation.Assembly.GetAttributes())
         {
             var type = attribute.AttributeClass;
             if (type?.OriginalDefinition.ToDisplayString() == "TheLithium.Imprint.SnapshotIncludeAttribute<T>"
                 && type.TypeArguments.Length == 1)
+            {
                 engine.Visit(type.TypeArguments[0], attribute.ApplicationSyntaxReference?.GetSyntax().GetLocation() ?? Location.None);
+            }
         }
         var body = new StringBuilder();
         body.AppendLine("// <auto-generated/>");
         body.AppendLine("#nullable enable");
-        body.AppendLine("#pragma warning disable CS0618, CA2255");
+        body.AppendLine("#pragma warning disable CS0618, CA2255, CS8600, CS8602, CS8603");
         body.AppendLine("namespace TheLithium.Imprint.Generated");
         body.AppendLine("{");
         body.AppendLine("    internal static class __SnapshotRegistration");
@@ -110,31 +179,48 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var candidate in calls)
         {
-            if (candidate == null || !candidate.IsBoundary || candidate.Declaration == null || candidate.Caller == null) continue;
+            if (candidate == null || !candidate.IsBoundary || candidate.Declaration == null || candidate.Caller == null)
+            {
+                continue;
+            }
+
             var declaration = candidate.Declaration;
             var method = candidate.Caller;
             var location = declaration.GetLocation().GetMappedLineSpan();
-            var file = string.IsNullOrEmpty(location.Path) ? declaration.SyntaxTree.FilePath : location.Path;
-            var key = file + ":" + location.StartLinePosition.Line.ToString(CultureInfo.InvariantCulture)
+            var file = candidate.OriginalFile ?? (string.IsNullOrEmpty(location.Path) ? declaration.SyntaxTree.FilePath : location.Path);
+            var firstLine = candidate.OriginalLine ?? location.StartLinePosition.Line + 1;
+            var lastLine = candidate.OriginalLine ?? location.EndLinePosition.Line + 1;
+            var key = file + ":" + firstLine.ToString(CultureInfo.InvariantCulture)
                 + ":" + method.ToDisplayString();
-            if (!seen.Add(key)) continue;
+            if (!seen.Add(key))
+            {
+                continue;
+            }
+
             var suite = SuiteName(method.ContainingType);
-            var test = AttributeName(method.GetAttributes()) ?? DisplayName(method) ?? method.Name;
+            var test = AttributeName(method.GetAttributes()) ?? method.Name;
+            var displayName = AttributeName(method.GetAttributes()) is null ? DisplayName(method) : null;
             var update = AttributeUpdate(method.GetAttributes());
-            if (update == 0) update = ClassUpdate(method.ContainingType);
+            if (update == 0)
+            {
+                update = ClassUpdate(method.ContainingType);
+            }
+
             var requiresCase = method.Parameters.Length != 0 || method.TypeParameters.Length != 0 || method.ContainingType.IsGenericType;
             body.Append("            global::TheLithium.Imprint.Generation.SnapshotMetadata.Register(")
                 .Append(Literal(file)).Append(", ")
-                .Append(location.StartLinePosition.Line + 1).Append(", ")
-                .Append(location.EndLinePosition.Line + 1).AppendLine(",");
-            body.Append("                new global::TheLithium.Imprint.Generation.SnapshotDescriptor(")
+                .Append(firstLine).Append(", ")
+                .Append(lastLine).AppendLine(",");
+            body.Append("                new global::TheLithium.Imprint.Generation.Models.SnapshotDescriptor(")
                 .Append(Literal(project)).Append(", ").Append(Literal(projectName)).Append(", ")
                 .Append(Literal(file)).Append(", ").Append(Literal(suite)).Append(", ").Append(Literal(test)).Append(", ")
                 .Append(Literal(method.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat
                     .WithMemberOptions(SymbolDisplayMemberOptions.IncludeContainingType | SymbolDisplayMemberOptions.IncludeParameters)
                     .WithParameterOptions(SymbolDisplayParameterOptions.IncludeType)))).Append(", ")
                 .Append("(global::TheLithium.Imprint.SnapshotUpdate)").Append(update).Append(", ")
-                .Append(requiresCase ? "true" : "false").AppendLine("));");
+                .Append(requiresCase ? "true" : "false").Append(", ")
+                .Append(artifacts == null ? "null" : Literal(artifacts)).Append(", ")
+                .Append(displayName == null ? "null" : Literal(displayName)).AppendLine("));");
         }
         body.AppendLine("        }");
         body.AppendLine("    }");
@@ -145,38 +231,72 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
     private static int ClassUpdate(INamedTypeSymbol? type)
     {
         for (INamedTypeSymbol? current = type; current != null; current = current.ContainingType)
+        {
             for (INamedTypeSymbol? inherited = current; inherited != null; inherited = inherited.BaseType)
             {
                 var update = AttributeUpdate(inherited.GetAttributes());
-                if (update != 0) return update;
+                if (update != 0)
+                {
+                    return update;
+                }
             }
+        }
+
         return 0;
     }
 
     private static string SuiteName(INamedTypeSymbol type)
     {
         var explicitName = AttributeName(type.GetAttributes());
-        if (explicitName != null) return explicitName;
+        if (explicitName != null)
+        {
+            return explicitName;
+        }
+
         var names = new Stack<string>();
-        for (INamedTypeSymbol? current = type; current != null; current = current.ContainingType) names.Push(current.Name);
+        for (INamedTypeSymbol? current = type; current != null; current = current.ContainingType)
+        {
+            names.Push(current.Name);
+        }
+
         return string.Join(".", names);
     }
 
     private static int AttributeUpdate(ImmutableArray<AttributeData> attributes)
     {
         foreach (var attribute in attributes)
+        {
             if (attribute.AttributeClass?.ToDisplayString() == "TheLithium.Imprint.SnapshotSettingsAttribute")
+            {
                 foreach (var argument in attribute.NamedArguments)
-                    if (argument.Key == "Update" && argument.Value.Value is int value) return value;
+                {
+                    if (argument.Key == "Update" && argument.Value.Value is int value)
+                    {
+                        return value;
+                    }
+                }
+            }
+        }
+
         return 0;
     }
 
     private static string? AttributeName(ImmutableArray<AttributeData> attributes)
     {
         foreach (var attribute in attributes)
+        {
             if (attribute.AttributeClass?.ToDisplayString() == "TheLithium.Imprint.SnapshotSettingsAttribute")
+            {
                 foreach (var argument in attribute.NamedArguments)
-                    if (argument.Key == "Name" && argument.Value.Value is string value) return value;
+                {
+                    if (argument.Key == "Name" && argument.Value.Value is string value)
+                    {
+                        return value;
+                    }
+                }
+            }
+        }
+
         return null;
     }
 
@@ -186,26 +306,54 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
         {
             var type = attribute.AttributeClass;
             // Row metadata describes one invocation, not the entire parameterized method.
-            if (type?.Name == "TestCaseAttribute" || type?.Name == "DataRowAttribute" || type?.Name == "InlineDataAttribute") continue;
+            if (type?.Name == "TestCaseAttribute" || type?.Name == "DataRowAttribute" || type?.Name == "InlineDataAttribute")
+            {
+                continue;
+            }
+
             var framework = false;
             for (var current = type; current != null; current = current.BaseType)
             {
                 var ns = current.ContainingNamespace.ToDisplayString();
                 if (ns == "Xunit" || ns == "NUnit.Framework" || ns == "Microsoft.VisualStudio.TestTools.UnitTesting")
-                { framework = true; break; }
+                {
+                    framework = true;
+                    break;
+                }
             }
-            if (!framework) continue;
+            if (!framework)
+            {
+                continue;
+            }
+
             foreach (var argument in attribute.NamedArguments)
+            {
                 if ((argument.Key == "DisplayName" || argument.Key == "Description")
-                    && argument.Value.Value is string value && !string.IsNullOrWhiteSpace(value)) return value;
+                    && argument.Value.Value is string value && !string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+
             if (attribute.AttributeConstructor != null)
+            {
                 for (var index = 0; index < attribute.AttributeConstructor.Parameters.Length; index++)
+                {
                     if (attribute.AttributeConstructor.Parameters[index].Name == "displayName"
                         && index < attribute.ConstructorArguments.Length
                         && attribute.ConstructorArguments[index].Value is string displayName
-                        && !string.IsNullOrWhiteSpace(displayName)) return displayName;
+                        && !string.IsNullOrWhiteSpace(displayName))
+                    {
+                        return displayName;
+                    }
+                }
+            }
+
             if (type?.Name == "DescriptionAttribute" && attribute.ConstructorArguments.Length == 1
-                && attribute.ConstructorArguments[0].Value is string description) return description;
+                && attribute.ConstructorArguments[0].Value is string description)
+            {
+                return description;
+            }
         }
         return null;
     }
@@ -222,26 +370,50 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
         internal readonly StringBuilder Registrations = new StringBuilder();
 
         internal WriterEmitter(SourceProductionContext context, Compilation compilation)
-        { _context = context; _compilation = compilation; }
+        {
+            _context = context;
+            _compilation = compilation;
+        }
 
         internal void Visit(ITypeSymbol type, Location location)
         {
             _context.CancellationToken.ThrowIfCancellationRequested();
-            if (!_visited.Add(type) || Builtin(type)) return;
+            if (!_visited.Add(type) || Builtin(type))
+            {
+                return;
+            }
             // Open generic helper sites are rooted through SnapshotInclude<T> or explicit writers.
-            if (ContainsTypeParameter(type)) return;
-            if (type.TypeKind == TypeKind.Error) return;
+            if (ContainsTypeParameter(type))
+            {
+                return;
+            }
+
+            if (type.TypeKind == TypeKind.Error)
+            {
+                return;
+            }
+
             if (type.TypeKind == TypeKind.Dynamic || type.TypeKind == TypeKind.Pointer || type.TypeKind == TypeKind.FunctionPointer
                 || (type is INamedTypeSymbol refType && refType.IsRefLikeType))
-            { Fail(type, location, "dynamic, pointer and ref-like values are not supported"); return; }
+            {
+                Fail(type, location, "dynamic, pointer and ref-like values are not supported");
+                return;
+            }
             var shape = Shape(type);
             if (shape == null)
-            { Fail(type, location, "the type cannot be named or its anonymous generic shape is unsupported"); return; }
+            {
+                Fail(type, location, "the type cannot be named or its anonymous generic shape is unsupported");
+                return;
+            }
             var code = new StringBuilder();
             var dependencies = new List<ITypeSymbol>();
             if (type is IArrayTypeSymbol array)
             {
-                if (array.Rank > 3) { Fail(type, location, "only one-, two- and three-dimensional arrays are generated"); return; }
+                if (array.Rank > 3)
+                {
+                    Fail(type, location, "only one-, two- and three-dimensional arrays are generated");
+                    return;
+                }
                 dependencies.Add(array.ElementType);
                 EmitArray(code, array.Rank, 0, new List<string>());
             }
@@ -253,7 +425,10 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
                     code.AppendLine("if (!v.HasValue) w.WriteNullValue();");
                     code.AppendLine("else global::TheLithium.Imprint.SnapshotWriters.Write(w, v.Value, c);");
                 }
-                else if (named.TypeKind == TypeKind.Enum) EmitEnum(code, named);
+                else if (named.TypeKind == TypeKind.Enum)
+                {
+                    EmitEnum(code, named, location);
+                }
                 else if (named.IsTupleType)
                 {
                     code.AppendLine("w.WriteStartObject();");
@@ -287,7 +462,11 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
                         var element = enumerable.TypeArguments[0];
                         var alternatives = named.AllInterfaces.Where(x => x.OriginalDefinition.ToDisplayString()
                             == "System.Collections.Generic.IEnumerable<T>").Select(x => x.TypeArguments[0]).Distinct(SymbolEqualityComparer.Default).Count();
-                        if (alternatives > 1) { Fail(type, location, "multiple IEnumerable<T> element types are ambiguous"); return; }
+                        if (alternatives > 1)
+                        {
+                            Fail(type, location, "multiple IEnumerable<T> element types are ambiguous");
+                            return;
+                        }
                         dependencies.Add(element);
                         code.AppendLine("w.WriteStartArray();");
                         code.AppendLine("int index = 0;");
@@ -302,30 +481,46 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
                         if (named.SpecialType == SpecialType.System_Object
                             || (!named.IsAnonymousType && (ns == "System" || ns.StartsWith("System.", StringComparison.Ordinal)) && !pair)
                             || named.TypeKind == TypeKind.Delegate)
-                        { Fail(type, location, "opaque runtime/framework types need an explicit representation"); return; }
+                        {
+                            Fail(type, location, "opaque runtime/framework types need an explicit representation");
+                            return;
+                        }
                         var members = PublicMembers(named);
                         if (members.Count == 0)
-                        { Fail(type, location, "no accessible public instance fields or readable properties were found"); return; }
+                        {
+                            Fail(type, location, "no accessible public instance fields or readable properties were found");
+                            return;
+                        }
                         code.AppendLine("w.WriteStartObject();");
                         foreach (var member in members)
                         {
                             var memberType = member is IPropertySymbol property ? property.Type : ((IFieldSymbol)member).Type;
                             dependencies.Add(memberType);
-                            var access = named.IsAnonymousType ? "v.@" + member.Name
-                                : "((" + TypeName(member.ContainingType!) + ")v).@" + member.Name;
+                            var access = named.IsAnonymousType ? "v.@" + member.Name : MemberAccess(named, member);
                             EmitMember(code, member.Name, access);
                         }
                         code.AppendLine("w.WriteEndObject();");
                     }
                 }
             }
-            else { Fail(type, location, "the static shape is unsupported"); return; }
+            else
+            {
+                Fail(type, location, "the static shape is unsupported");
+                return;
+            }
 
-            foreach (var dependency in dependencies) Visit(dependency, location);
+            foreach (var dependency in dependencies)
+            {
+                Visit(dependency, location);
+            }
+
             Registrations.Append("            global::TheLithium.Imprint.SnapshotWriters.TryRegister(").Append(shape).AppendLine(", static (w, v, c) =>");
             Registrations.AppendLine("            {");
             foreach (var line in code.ToString().Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
                 Registrations.Append("                ").AppendLine(line.TrimEnd('\r'));
+            }
+
             Registrations.AppendLine("            });");
         }
 
@@ -333,21 +528,46 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
         {
             var members = new Dictionary<string, ISymbol>(StringComparer.Ordinal);
             var types = new List<INamedTypeSymbol>();
-            for (INamedTypeSymbol? current = type; current != null; current = current.BaseType) types.Add(current);
-            if (type.TypeKind == TypeKind.Interface) types.AddRange(type.AllInterfaces);
+            for (INamedTypeSymbol? current = type; current != null; current = current.BaseType)
+            {
+                types.Add(current);
+            }
+
+            if (type.TypeKind == TypeKind.Interface)
+            {
+                types.AddRange(type.AllInterfaces);
+            }
+
             foreach (var declaring in types)
+            {
                 foreach (var member in declaring.GetMembers())
                 {
-                    if (member.IsStatic || members.ContainsKey(member.Name)) continue;
+                    if (member.IsStatic || members.ContainsKey(member.Name))
+                    {
+                        continue;
+                    }
+
                     if (member is IPropertySymbol property && !property.IsIndexer
                         && property.GetMethod?.DeclaredAccessibility == Accessibility.Public
                         && property.ExplicitInterfaceImplementations.Length == 0)
+                    {
                         members.Add(property.Name, property);
+                    }
                     else if (member is IFieldSymbol field && field.DeclaredAccessibility == Accessibility.Public
                         && !field.IsConst && !field.IsImplicitlyDeclared && !field.IsFixedSizeBuffer)
+                    {
                         members.Add(field.Name, field);
+                    }
                 }
+            }
+
             return members.Values.OrderBy(x => x.Name, StringComparer.Ordinal).ToList();
+        }
+
+        private static string MemberAccess(INamedTypeSymbol fallbackType, ISymbol member)
+        {
+            var declaringType = member.ContainingType ?? fallbackType;
+            return "((" + TypeName(declaringType) + ")v).@" + member.Name;
         }
 
         private static void EmitMember(StringBuilder code, string name, string access)
@@ -374,15 +594,22 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
             code.Append("    using (c.At(").Append(index).AppendLine("))");
             code.AppendLine("    {");
             indices.Add(index);
-            if (level + 1 < rank) EmitArray(code, rank, level + 1, indices);
-            else code.Append("global::TheLithium.Imprint.SnapshotWriters.Write(w, v[").Append(string.Join(", ", indices)).AppendLine("], c);");
+            if (level + 1 < rank)
+            {
+                EmitArray(code, rank, level + 1, indices);
+            }
+            else
+            {
+                code.Append("global::TheLithium.Imprint.SnapshotWriters.Write(w, v[").Append(string.Join(", ", indices)).AppendLine("], c);");
+            }
+
             indices.RemoveAt(indices.Count - 1);
             code.AppendLine("    }");
             code.AppendLine("}");
             code.AppendLine("w.WriteEndArray();");
         }
 
-        private static void EmitEnum(StringBuilder code, INamedTypeSymbol type)
+        private void EmitEnum(StringBuilder code, INamedTypeSymbol type, Location location)
         {
             var seen = new HashSet<string>(StringComparer.Ordinal);
             code.AppendLine("switch (v)");
@@ -390,11 +617,21 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
             foreach (var field in type.GetMembers().OfType<IFieldSymbol>().Where(x => x.HasConstantValue))
             {
                 var key = Convert.ToString(field.ConstantValue, CultureInfo.InvariantCulture) ?? "";
-                if (!seen.Add(key)) continue;
+                if (!seen.Add(key))
+                {
+                    continue;
+                }
+
                 code.Append("case ").Append(TypeName(type)).Append(".@").Append(field.Name)
                     .Append(": w.WriteStringValue(").Append(Literal(field.Name)).AppendLine("); break;");
             }
-            code.Append("default: w.WriteNumberValue((").Append(TypeName(type.EnumUnderlyingType!)).AppendLine(")v); break;");
+            if (type.EnumUnderlyingType is not { } underlyingType)
+            {
+                Fail(type, location, "the enum underlying type could not be resolved");
+                return;
+            }
+
+            code.Append("default: w.WriteNumberValue((").Append(TypeName(underlyingType)).AppendLine(")v); break;");
             code.AppendLine("}");
         }
 
@@ -402,16 +639,28 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
         {
             if (!ContainsAnonymous(type))
             {
-                if (!_compilation.IsSymbolAccessibleWithin(type, _compilation.Assembly)) return null;
-                return "default(" + TypeName(type) + ")!";
+                if (!_compilation.IsSymbolAccessibleWithin(type, _compilation.Assembly))
+                {
+                    return null;
+                }
+
+                return "default(" + TypeName(type) + ")";
             }
             if (type is IArrayTypeSymbol array)
             {
                 var child = Shape(array.ElementType);
-                if (child == null || array.Rank > 3) return null;
+                if (child == null || array.Rank > 3)
+                {
+                    return null;
+                }
+
                 return "global::TheLithium.Imprint.Generation.Shapes.Array" + (array.Rank == 1 ? "" : array.Rank.ToString(CultureInfo.InvariantCulture)) + "(" + child + ")";
             }
-            if (!(type is INamedTypeSymbol named)) return null;
+            if (!(type is INamedTypeSymbol named))
+            {
+                return null;
+            }
+
             if (named.IsAnonymousType)
             {
                 var fields = new List<string>();
@@ -419,7 +668,11 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
                 foreach (var property in named.GetMembers().OfType<IPropertySymbol>())
                 {
                     var child = Shape(property.Type);
-                    if (child == null) return null;
+                    if (child == null)
+                    {
+                        return null;
+                    }
+
                     fields.Add("@" + property.Name + " = " + child);
                 }
                 return "new { " + string.Join(", ", fields) + " }";
@@ -427,49 +680,101 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
             if (named.IsTupleType)
             {
                 var elements = named.TupleElements.Select(x => Shape(x.Type)).ToArray();
-                if (elements.Any(x => x == null)) return null;
+                if (elements.Any(x => x == null))
+                {
+                    return null;
+                }
+
                 return "(" + string.Join(", ", elements) + ")";
             }
             var definition = named.OriginalDefinition.ToDisplayString();
             string? helper = null;
             switch (definition)
             {
-                case "System.Collections.Generic.List<T>": helper = "List"; break;
-                case "System.Collections.Generic.IEnumerable<T>": helper = "Enumerable"; break;
-                case "System.Collections.Generic.IList<T>": helper = "IList"; break;
-                case "System.Collections.Generic.ICollection<T>": helper = "ICollection"; break;
-                case "System.Collections.Generic.IReadOnlyList<T>": helper = "ReadOnlyList"; break;
-                case "System.Collections.Generic.IReadOnlyCollection<T>": helper = "ReadOnlyCollection"; break;
-                case "System.Collections.Generic.HashSet<T>": helper = "HashSet"; break;
-                case "System.Collections.Generic.ISet<T>": helper = "ISet"; break;
-                case "System.Collections.Generic.Dictionary<TKey, TValue>": helper = "Dictionary"; break;
-                case "System.Collections.Generic.IDictionary<TKey, TValue>": helper = "IDictionary"; break;
-                case "System.Collections.Generic.IReadOnlyDictionary<TKey, TValue>": helper = "ReadOnlyDictionary"; break;
-                case "System.Collections.Generic.KeyValuePair<TKey, TValue>": helper = "Pair"; break;
+                case "System.Collections.Generic.List<T>":
+                    helper = "List";
+                    break;
+                case "System.Collections.Generic.IEnumerable<T>":
+                    helper = "Enumerable";
+                    break;
+                case "System.Collections.Generic.IList<T>":
+                    helper = "IList";
+                    break;
+                case "System.Collections.Generic.ICollection<T>":
+                    helper = "ICollection";
+                    break;
+                case "System.Collections.Generic.IReadOnlyList<T>":
+                    helper = "ReadOnlyList";
+                    break;
+                case "System.Collections.Generic.IReadOnlyCollection<T>":
+                    helper = "ReadOnlyCollection";
+                    break;
+                case "System.Collections.Generic.HashSet<T>":
+                    helper = "HashSet";
+                    break;
+                case "System.Collections.Generic.ISet<T>":
+                    helper = "ISet";
+                    break;
+                case "System.Collections.Generic.Dictionary<TKey, TValue>":
+                    helper = "Dictionary";
+                    break;
+                case "System.Collections.Generic.IDictionary<TKey, TValue>":
+                    helper = "IDictionary";
+                    break;
+                case "System.Collections.Generic.IReadOnlyDictionary<TKey, TValue>":
+                    helper = "ReadOnlyDictionary";
+                    break;
+                case "System.Collections.Generic.KeyValuePair<TKey, TValue>":
+                    helper = "Pair";
+                    break;
             }
-            if (helper == null) return null;
+            if (helper == null)
+            {
+                return null;
+            }
+
             var arguments = named.TypeArguments.Select(Shape).ToArray();
-            if (arguments.Any(x => x == null)) return null;
+            if (arguments.Any(x => x == null))
+            {
+                return null;
+            }
+
             return "global::TheLithium.Imprint.Generation.Shapes." + helper + "(" + string.Join(", ", arguments) + ")";
         }
 
         private static bool ContainsAnonymous(ITypeSymbol type)
         {
-            if (type is IArrayTypeSymbol array) return ContainsAnonymous(array.ElementType);
+            if (type is IArrayTypeSymbol array)
+            {
+                return ContainsAnonymous(array.ElementType);
+            }
+
             return type is INamedTypeSymbol named && (named.IsAnonymousType || named.TypeArguments.Any(ContainsAnonymous));
         }
 
         private static bool ContainsTypeParameter(ITypeSymbol type)
         {
-            if (type.TypeKind == TypeKind.TypeParameter) return true;
-            if (type is IArrayTypeSymbol array) return ContainsTypeParameter(array.ElementType);
+            if (type.TypeKind == TypeKind.TypeParameter)
+            {
+                return true;
+            }
+
+            if (type is IArrayTypeSymbol array)
+            {
+                return ContainsTypeParameter(array.ElementType);
+            }
+
             return type is INamedTypeSymbol named && (named.IsUnboundGenericType || named.TypeArguments.Any(ContainsTypeParameter)
                 || (named.ContainingType != null && ContainsTypeParameter(named.ContainingType)));
         }
 
         private static INamedTypeSymbol? Interface(INamedTypeSymbol type, string definition)
         {
-            if (type.OriginalDefinition.ToDisplayString() == definition) return type;
+            if (type.OriginalDefinition.ToDisplayString() == definition)
+            {
+                return type;
+            }
+
             return type.AllInterfaces.FirstOrDefault(x => x.OriginalDefinition.ToDisplayString() == definition);
         }
 
@@ -477,12 +782,23 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
         {
             switch (type.SpecialType)
             {
-                case SpecialType.System_String: case SpecialType.System_Char: case SpecialType.System_Boolean:
-                case SpecialType.System_Byte: case SpecialType.System_SByte: case SpecialType.System_Int16:
-                case SpecialType.System_UInt16: case SpecialType.System_Int32: case SpecialType.System_UInt32:
-                case SpecialType.System_Int64: case SpecialType.System_UInt64: case SpecialType.System_Decimal:
-                case SpecialType.System_Single: case SpecialType.System_Double: case SpecialType.System_IntPtr:
-                case SpecialType.System_UIntPtr: return true;
+                case SpecialType.System_String:
+                case SpecialType.System_Char:
+                case SpecialType.System_Boolean:
+                case SpecialType.System_Byte:
+                case SpecialType.System_SByte:
+                case SpecialType.System_Int16:
+                case SpecialType.System_UInt16:
+                case SpecialType.System_Int32:
+                case SpecialType.System_UInt32:
+                case SpecialType.System_Int64:
+                case SpecialType.System_UInt64:
+                case SpecialType.System_Decimal:
+                case SpecialType.System_Single:
+                case SpecialType.System_Double:
+                case SpecialType.System_IntPtr:
+                case SpecialType.System_UIntPtr:
+                    return true;
             }
             var name = type.WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString();
             return name == "System.Half" || name == "System.Int128" || name == "System.UInt128"

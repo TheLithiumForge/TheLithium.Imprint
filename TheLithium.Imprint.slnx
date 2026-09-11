@@ -1,8 +1,8 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/TheLithium.Imprint.Build/TheLithium.Imprint.Build.csproj" />
     <Project Path="src/TheLithium.Imprint.Core/TheLithium.Imprint.Core.csproj" />
     <Project Path="src/TheLithium.Imprint.Generator/TheLithium.Imprint.Generator.csproj" />
-    <Project Path="src/TheLithium.Imprint.Tool/TheLithium.Imprint.Tool.csproj" />
     <Project Path="src/TheLithium.Imprint/TheLithium.Imprint.csproj" />
   </Folder>
   <Folder Name="/tests/">

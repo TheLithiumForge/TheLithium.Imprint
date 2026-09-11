@@ -7,16 +7,26 @@ internal static class Program
     public static async Task<int> Main(string[] args)
     {
         if (args is ["--concurrency-worker", var directory])
+        {
             return await ConcurrentWorker(directory);
+        }
+
         if (args.Length >= 2 && args[0] == "--probe")
         {
             using var writer = new System.Text.Json.Utf8JsonWriter(Console.OpenStandardOutput());
             writer.WriteStartObject();
             writer.WriteStartArray("arguments");
-            foreach (var argument in args.Skip(2)) writer.WriteStringValue(argument);
+            foreach (var argument in args.Skip(2))
+            {
+                writer.WriteStringValue(argument);
+            }
+
             writer.WriteEndArray();
             foreach (var variable in new[] { "IMPRINT_UPDATE", "IMPRINT_TEST", "IMPRINT_READ_ONLY", "IMPRINT_ALLOW_CI_UPDATE" })
+            {
                 writer.WriteString(variable, Environment.GetEnvironmentVariable(variable));
+            }
+
             writer.WriteEndObject();
             writer.Flush();
             return int.Parse(args[1], System.Globalization.CultureInfo.InvariantCulture);
@@ -35,7 +45,11 @@ internal static class Program
             var failed = 0;
             foreach (var test in tests)
             {
-                try { await test.Run(); Console.WriteLine("PASS " + test.Name); }
+                try
+                {
+                    await test.Run();
+                    Console.WriteLine("PASS " + test.Name);
+                }
                 catch (Exception error)
                 {
                     failed++;
@@ -47,7 +61,13 @@ internal static class Program
             Console.WriteLine("Dynamic code supported: " + RuntimeFeature.IsDynamicCodeSupported);
             return failed == 0 ? 0 : 1;
         }
-        finally { foreach (var value in isolated.Reverse()) value.Dispose(); }
+        finally
+        {
+            foreach (var value in isolated.Reverse())
+            {
+                value.Dispose();
+            }
+        }
     }
 
     private static async Task<int> ConcurrentWorker(string directory)
@@ -57,13 +77,20 @@ internal static class Program
             Identity = new(directory, Path.Combine(directory, "Fixture.cs"), "Suite", "Example", LogicalId: "TheLithium.Imprint.Specifications/Example"),
             Update = SnapshotUpdate.All
         });
-        1.Snapshot("value");
+        1.AssertSnapshot("value");
         var ready = Path.Combine(directory, "ready-" + Environment.ProcessId);
         await File.WriteAllTextAsync(ready, "ready");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         while (Directory.GetFiles(directory, "ready-*").Length < 2)
+        {
             await Task.Delay(20, timeout.Token);
-        try { scope.Complete(); return 0; }
+        }
+
+        try
+        {
+            scope.Complete();
+            return 0;
+        }
         catch (SnapshotConflictException) { return 3; }
     }
 }

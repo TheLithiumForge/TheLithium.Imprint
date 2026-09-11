@@ -2,4 +2,9 @@
   <Target Name="PrepareLocalPackageFeed" BeforeTargets="CollectPackageReferences">
     <MakeDir Directories="$(PackageOutputPath)" />
   </Target>
+  <PropertyGroup Condition="'$(UsePackageReferences)' != 'true' and '$(ImprintDevelopmentBuild)' == 'true'">
+    <ImprintBuildAssembly>$(ArtifactsPath)/bin/TheLithium.Imprint.Build/$(Configuration.ToLowerInvariant())/TheLithium.Imprint.Build.dll</ImprintBuildAssembly>
+  </PropertyGroup>
+  <Import Project="src/TheLithium.Imprint/buildTransitive/TheLithium.Imprint.targets"
+          Condition="'$(ImprintBuildAssembly)' != ''" />
 </Project>

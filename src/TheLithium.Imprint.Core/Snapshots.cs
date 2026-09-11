@@ -7,9 +7,11 @@ public static class Snapshots
 {
     private static readonly AsyncLocal<SnapshotScope?> Ambient = new();
 
+    internal static SnapshotScope? Active => Ambient.Value;
+
     public static SnapshotScope Current => Ambient.Value
-        ?? throw new SnapshotConfigurationException("No snapshot scope is active. Put this test body inside Snapshots.Run/RunAsync, " +
-            "or use Snapshots.Begin with explicit Complete in a runner integration.");
+        ?? throw new SnapshotConfigurationException("No snapshot lifetime is active. Reference the TheLithium.Imprint package in the test project and rebuild. " +
+            "The package instruments test methods during compilation; the Core package alone requires an explicit integration.");
 
     public static SnapshotScope Begin(SnapshotTestOptions? options = null,
         [CallerFilePath] string sourceFile = "", [CallerLineNumber] int sourceLine = 0)
@@ -62,23 +64,9 @@ public static class Snapshots
 
     internal static void Restore(SnapshotScope scope, SnapshotScope? previous)
     {
-        if (ReferenceEquals(Ambient.Value, scope)) Ambient.Value = previous;
-    }
-}
-
-public static class SnapshotExtensions
-{
-    /// <summary>Captures this value immediately; comparison and authorized updates happen at test completion.</summary>
-    public static void Snapshot<T>(this T value, string? name = null, SnapshotOptions? options = null,
-        [CallerArgumentExpression(nameof(value))] string? expression = null)
-        => Snapshots.Current.Capture(value, name, options, expression, writer: null);
-
-    /// <summary>Uses an explicit statically typed writer for this capture only.</summary>
-    public static void Snapshot<T>(this T value, SnapshotWriter<T> writer,
-        string? name = null, SnapshotOptions? options = null,
-        [CallerArgumentExpression(nameof(value))] string? expression = null)
-    {
-        ArgumentNullException.ThrowIfNull(writer);
-        Snapshots.Current.Capture(value, name, options, expression, writer);
+        if (ReferenceEquals(Ambient.Value, scope))
+        {
+            Ambient.Value = previous;
+        }
     }
 }

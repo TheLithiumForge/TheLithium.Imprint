@@ -21,7 +21,7 @@ public sealed class GeneratorTests
     [InlineData("new[] { new { Name = \"first\" }, new { Name = \"second\" } }")]
     public void SupportedShapesCompile(string expression)
     {
-        var result = Generate("using TheLithium.Imprint; public class Tests { public void Test() => Snapshots.Run(() => (" + expression + ").Snapshot()); }");
+        var result = Generate("using TheLithium.Imprint; public class Tests { public void Test() => Snapshots.Run(() => (" + expression + ").AssertSnapshot()); }");
         Assert.Empty(result.Errors);
         Assert.DoesNotContain(result.Diagnostics, d => d.Id == "IMP001");
         Assert.Contains("SnapshotMetadata.Register", result.Source);
@@ -35,7 +35,7 @@ public sealed class GeneratorTests
             public class Tests
             {
                 private record Hidden(int Value);
-                public void Test() => Snapshots.Run(() => new Hidden(1).Snapshot());
+                public void Test() => Snapshots.Run(() => new Hidden(1).AssertSnapshot());
             }
             """);
         var diagnostic = Assert.Single(result.Diagnostics, d => d.Id == "IMP001");
@@ -51,7 +51,7 @@ public sealed class GeneratorTests
             public class Tests
             {
                 private record Hidden(int Value);
-                public void Test() => Snapshots.Run(() => new Hidden(1).Snapshot(static (w, v, c) => w.WriteNumberValue(v.Value)));
+                public void Test() => Snapshots.Run(() => new Hidden(1).AssertSnapshot(static (w, v, c) => w.WriteNumberValue(v.Value)));
             }
             """);
         Assert.Empty(result.Errors);
@@ -71,18 +71,19 @@ public sealed class GeneratorTests
     [InlineData("Xunit", "Fact", "DisplayName", "Readable test")]
     [InlineData("NUnit.Framework", "Test", "Description", "Readable test")]
     [InlineData("Microsoft.VisualStudio.TestTools.UnitTesting", "TestMethod", "DisplayName", "Readable test")]
-    public void ReadsFrameworkDisplayMetadata(string ns, string attribute, string property, string name)
+    public void FrameworkDisplayMetadataIsKeptAsAnOptInName(string ns, string attribute, string property, string name)
     {
         var result = Generate($$"""
             using TheLithium.Imprint;
             namespace {{ns}} { public class {{attribute}}Attribute : System.Attribute { public string {{property}} { get; set; } } }
             public class Tests {
                 [{{ns}}.{{attribute}}({{property}} = "{{name}}")]
-                public void Test() => Snapshots.Run(() => 1.Snapshot());
+                public void Test() => Snapshots.Run(() => 1.AssertSnapshot());
             }
             """);
         Assert.Empty(result.Errors);
         Assert.Contains("\"Readable test\"", result.Source);
+        Assert.Contains("\"Tests\", \"Test\"", result.Source);
     }
 
     [Fact]
@@ -94,7 +95,7 @@ public sealed class GeneratorTests
             [SnapshotSettings(Name = "Suite")] public class Tests : Parent
             {
                 [SnapshotSettings(Name = "Test title", Update = SnapshotUpdate.Verify)]
-                public void Test() => Snapshots.Run(() => 1.Snapshot());
+                public void Test() => Snapshots.Run(() => 1.AssertSnapshot());
             }
             """);
         Assert.Empty(result.Errors);
@@ -105,7 +106,7 @@ public sealed class GeneratorTests
     [Fact]
     public void ParameterizedTestsRequireCase()
     {
-        var result = Generate("using TheLithium.Imprint; public class Tests { public void Test(int value) => Snapshots.Run(() => value.Snapshot()); }");
+        var result = Generate("using TheLithium.Imprint; public class Tests { public void Test(int value) => Snapshots.Run(() => value.AssertSnapshot()); }");
         Assert.Empty(result.Errors);
         Assert.Contains("SnapshotUpdate)0, true", result.Source);
     }
@@ -113,7 +114,7 @@ public sealed class GeneratorTests
     [Fact]
     public void EnumAliasesDoNotGenerateDuplicateCases()
     {
-        var result = Generate("using TheLithium.Imprint; public enum State { A=0, B=0, C=1 } public class Tests { public void Test() => Snapshots.Run(() => State.B.Snapshot()); }");
+        var result = Generate("using TheLithium.Imprint; public enum State { A=0, B=0, C=1 } public class Tests { public void Test() => Snapshots.Run(() => State.B.AssertSnapshot()); }");
         Assert.Empty(result.Errors);
     }
 
@@ -124,7 +125,7 @@ public sealed class GeneratorTests
             using TheLithium.Imprint;
             [assembly: SnapshotInclude<Result>]
             public record Result(int Value);
-            public class Tests { public void Capture<T>(T value) => value.Snapshot(); }
+            public class Tests { public void Capture<T>(T value) => value.AssertSnapshot(); }
             """);
         Assert.Empty(result.Errors);
         Assert.Contains("default(global::Result)", result.Source);
@@ -139,7 +140,7 @@ public sealed class GeneratorTests
             {
                 private class Parent { public int Value { get; set; } }
                 private class Child : Parent { }
-                public void Test() => Snapshots.Run(() => new Child().Snapshot());
+                public void Test() => Snapshots.Run(() => new Child().AssertSnapshot());
             }
             """);
         Assert.Empty(result.Errors);
@@ -149,8 +150,8 @@ public sealed class GeneratorTests
     [Fact]
     public void MemberEditsRegenerateWriters()
     {
-        var before = Generate("using TheLithium.Imprint; public record Model(int A); public class Tests { public void Test() => Snapshots.Run(() => new Model(1).Snapshot()); }");
-        var after = Generate("using TheLithium.Imprint; public record Model(int A, int B); public class Tests { public void Test() => Snapshots.Run(() => new Model(1, 2).Snapshot()); }");
+        var before = Generate("using TheLithium.Imprint; public record Model(int A); public class Tests { public void Test() => Snapshots.Run(() => new Model(1).AssertSnapshot()); }");
+        var after = Generate("using TheLithium.Imprint; public record Model(int A, int B); public class Tests { public void Test() => Snapshots.Run(() => new Model(1, 2).AssertSnapshot()); }");
         Assert.Empty(before.Errors);
         Assert.Empty(after.Errors);
         Assert.DoesNotContain("WritePropertyName(\"B\")", before.Source);
@@ -158,7 +159,7 @@ public sealed class GeneratorTests
     }
 
     [Fact]
-    public void DerivedFrameworkAttributeKeepsItsDisplayName()
+    public void DerivedFrameworkAttributeKeepsDisplayMetadataAvailable()
     {
         var result = Generate("""
             using TheLithium.Imprint;
@@ -166,11 +167,12 @@ public sealed class GeneratorTests
             public class ScenarioAttribute : Xunit.FactAttribute { }
             public class Tests {
                 [Scenario(DisplayName = "Custom scenario")]
-                public void Test() => Snapshots.Run(() => 1.Snapshot());
+                public void Test() => Snapshots.Run(() => 1.AssertSnapshot());
             }
             """);
         Assert.Empty(result.Errors);
         Assert.Contains("\"Custom scenario\"", result.Source);
+        Assert.Contains("\"Tests\", \"Test\"", result.Source);
     }
 
     [Fact]
@@ -183,7 +185,7 @@ public sealed class GeneratorTests
             }
             public class Tests {
                 [Microsoft.VisualStudio.TestTools.UnitTesting.DataRow(DisplayName = "Only one row")]
-                public void Test(int value) => Snapshots.Run(() => value.Snapshot());
+                public void Test(int value) => Snapshots.Run(() => value.AssertSnapshot());
             }
             """);
         Assert.Empty(result.Errors);
@@ -192,7 +194,7 @@ public sealed class GeneratorTests
     }
 
     [Fact]
-    public void LegacyConstructorDisplayNameIsReadByParameterName()
+    public void ConstructorDisplayNameIsKeptAsAnOptInName()
     {
         var result = Generate("""
             using TheLithium.Imprint;
@@ -201,15 +203,21 @@ public sealed class GeneratorTests
             }
             public class Tests {
                 [Microsoft.VisualStudio.TestTools.UnitTesting.TestMethod("Legacy display name")]
-                public void Test() => Snapshots.Run(() => 1.Snapshot());
+                public void Test() => Snapshots.Run(() => 1.AssertSnapshot());
             }
             """);
         Assert.Empty(result.Errors);
         Assert.Contains("\"Legacy display name\"", result.Source);
+        Assert.Contains("\"Tests\", \"Test\"", result.Source);
     }
 
     private static GenerationResult Generate(string source)
     {
+        source = """
+            using TheLithium.Imprint.Configuration;
+            using TheLithium.Imprint.Configuration.Models;
+            using TheLithium.Imprint.Serialization;
+            """ + "\n" + source;
         var options = new CSharpParseOptions(LanguageVersion.Preview);
         var compilation = CSharpCompilation.Create("Consumer", [CSharpSyntaxTree.ParseText(source, options, "Tests.cs")],
             References, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));

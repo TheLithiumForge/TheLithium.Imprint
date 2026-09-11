@@ -34,20 +34,20 @@ public static partial class Specs
     private static void TextDiffIncludesContext()
     {
         using var f = new Fixture();
-        f.Run(() => "header\nold line\nfooter".Snapshot("text"), SnapshotUpdate.All);
-        var error = Check.Throws<SnapshotMismatchException>(() => f.Run(() => "header\nnew line\nfooter".Snapshot("text")));
+        f.Run(() => "header\nold line\nfooter".AssertSnapshot("text"), SnapshotUpdate.All);
+        var error = Check.Throws<SnapshotMismatchException>(() => f.Run(() => "header\nnew line\nfooter".AssertSnapshot("text")));
         Check.True(error.Message.Contains("--- expected\n", StringComparison.Ordinal));
         Check.True(error.Message.Contains("- old line", StringComparison.Ordinal));
         Check.True(error.Message.Contains("+ new line", StringComparison.Ordinal));
         Check.True(error.Message.Contains("  footer", StringComparison.Ordinal));
-        Check.True(error.Message.Contains("imprint run --update all", StringComparison.Ordinal));
+        Check.True(error.Message.Contains("UpdateSnapshot()", StringComparison.Ordinal));
     }
 
     private static void JsonDiffIncludesPathAndValues()
     {
         using var f = new Fixture();
-        f.Run(() => new { Customer = new { Name = "Alice" } }.Snapshot("customer"), SnapshotUpdate.All);
-        var error = Check.Throws<SnapshotMismatchException>(() => f.Run(() => new { Customer = new { Name = "Bob" } }.Snapshot("customer")));
+        f.Run(() => new { Customer = new { Name = "Alice" } }.AssertSnapshot("customer"), SnapshotUpdate.All);
+        var error = Check.Throws<SnapshotMismatchException>(() => f.Run(() => new { Customer = new { Name = "Bob" } }.AssertSnapshot("customer")));
         Check.True(error.Message.Contains("$[\"Customer\"][\"Name\"]", StringComparison.Ordinal));
         Check.True(error.Message.Contains("Alice", StringComparison.Ordinal) && error.Message.Contains("Bob", StringComparison.Ordinal));
         Check.True(File.Exists(Path.Combine(error.Report.ArtifactDirectory!, "customer.expected.json")));
@@ -86,7 +86,10 @@ public static partial class Specs
     private static void DiffExposesLineEndings()
     {
         var difference = DefaultSnapshotComparer.Instance.Compare("a\r\nb", "a\nb", SnapshotFormat.Text,
-            new() { IgnoreLineEndings = false });
+            new()
+            {
+                IgnoreLineEndings = false
+            });
         Check.True(!difference.Equal && difference.Difference!.Contains("- a\\r", StringComparison.Ordinal));
         Check.True(DefaultSnapshotComparer.Instance.Compare("a\r\nb", "a\nb", SnapshotFormat.Text, new()).Equal);
     }
@@ -94,7 +97,7 @@ public static partial class Specs
     private static void ExplicitStringWriterUsesJson()
     {
         using var f = new Fixture();
-        f.Run(() => "source".Snapshot(static (writer, value, _) =>
+        f.Run(() => "source".AssertSnapshot(static (writer, value, _) =>
         {
             writer.WriteStartObject();
             writer.WriteString("Value", value);
@@ -107,9 +110,9 @@ public static partial class Specs
     private static void FormatMigrationKeepsExpectedArtifact()
     {
         using var f = new Fixture();
-        f.Run(() => "1".Snapshot("value"), SnapshotUpdate.All);
-        var error = Check.Throws<SnapshotMismatchException>(() => f.Run(() => 1.Snapshot("value")));
-        Check.Equal("1", File.ReadAllText(Path.Combine(error.Report.ArtifactDirectory!, "value.expected.snap")));
+        f.Run(() => "1".AssertSnapshot("value"), SnapshotUpdate.All);
+        var error = Check.Throws<SnapshotMismatchException>(() => f.Run(() => 1.AssertSnapshot("value")));
+        Check.Equal("1", File.ReadAllText(Path.Combine(error.Report.ArtifactDirectory!, "value.expected.txt")));
         Check.True(File.Exists(Path.Combine(error.Report.ArtifactDirectory!, "value.received.json")));
     }
 
@@ -119,10 +122,10 @@ public static partial class Specs
         f.Run(() =>
         {
             var parent = Snapshots.Current;
-            1.Snapshot("before");
-            f.Run(() => 2.Snapshot("inner"), SnapshotUpdate.All, "Nested");
+            1.AssertSnapshot("before");
+            f.Run(() => 2.AssertSnapshot("inner"), SnapshotUpdate.All, "Nested");
             Check.True(ReferenceEquals(parent, Snapshots.Current));
-            3.Snapshot("after");
+            3.AssertSnapshot("after");
         }, SnapshotUpdate.All);
         Check.True(File.Exists(f.FilePath("after.json")));
         Check.True(File.Exists(f.FilePath("inner.json", "Nested")));
@@ -133,7 +136,7 @@ public static partial class Specs
     {
         using var f = new Fixture();
         await Snapshots.RunAsync(async () => await Task.WhenAll(Enumerable.Range(0, 32)
-            .Select(index => Task.Run(() => index.Snapshot("item-" + index)))), f.Options(SnapshotUpdate.All));
+            .Select(index => Task.Run(() => index.AssertSnapshot("item-" + index)))), f.Options(SnapshotUpdate.All));
         Check.Equal(32, Directory.GetFiles(f.Baselines(), "*.json").Length);
     }
 
@@ -143,7 +146,7 @@ public static partial class Specs
         var expected = new InvalidOperationException("application assertion");
         var actual = await Check.ThrowsAsync<InvalidOperationException>(() => Snapshots.RunAsync(async () =>
         {
-            1.Snapshot("value");
+            1.AssertSnapshot("value");
             await Task.Yield();
             throw expected;
         }, f.Options(SnapshotUpdate.All)));
@@ -157,10 +160,13 @@ public static partial class Specs
         using var cancellation = new CancellationTokenSource();
         await Check.ThrowsAsync<OperationCanceledException>(() => Snapshots.RunAsync(async () =>
         {
-            1.Snapshot("value");
+            1.AssertSnapshot("value");
             await Task.Yield();
             cancellation.Cancel();
-        }, f.Options(SnapshotUpdate.All) with { CancellationToken = cancellation.Token }));
+        }, f.Options(SnapshotUpdate.All) with
+        {
+            CancellationToken = cancellation.Token
+        }));
         Check.True(!File.Exists(f.FilePath("value.json")));
     }
 
@@ -169,11 +175,11 @@ public static partial class Specs
         using var f = new Fixture();
         f.Run(() =>
         {
-            1.Snapshot("café");
-            2.Snapshot("cafe\u0301");
-            3.Snapshot("NUL");
-            4.Snapshot("../../outside");
-            5.Snapshot(new string('x', 300) + "😀");
+            1.AssertSnapshot("café");
+            2.AssertSnapshot("cafe\u0301");
+            3.AssertSnapshot("NUL");
+            4.AssertSnapshot("../../outside");
+            5.AssertSnapshot(new string('x', 300) + "😀");
         }, SnapshotUpdate.All);
         var files = Directory.GetFiles(f.Baselines());
         Check.Equal(5, files.Length);
@@ -184,8 +190,14 @@ public static partial class Specs
     private static void VariantIdentitiesAreSeparate()
     {
         using var f = new Fixture();
-        Snapshots.Run(() => 1.Snapshot("value"), f.Options(SnapshotUpdate.All) with { Variant = "windows" });
-        Snapshots.Run(() => 2.Snapshot("value"), f.Options(SnapshotUpdate.All) with { Variant = "linux" });
+        Snapshots.Run(() => 1.AssertSnapshot("value"), f.Options(SnapshotUpdate.All) with
+        {
+            Variant = "windows"
+        });
+        Snapshots.Run(() => 2.AssertSnapshot("value"), f.Options(SnapshotUpdate.All) with
+        {
+            Variant = "linux"
+        });
         Check.True(File.Exists(f.FilePath("value.json", "Example [windows]")));
         Check.True(File.Exists(f.FilePath("value.json", "Example [linux]")));
     }
@@ -193,8 +205,8 @@ public static partial class Specs
     private static void GetterFailurePreservesBaseline()
     {
         using var f = new Fixture();
-        f.Run(() => 1.Snapshot("value"), SnapshotUpdate.All);
-        var error = Check.Throws<SnapshotCaptureException>(() => f.Run(() => new ThrowingModel().Snapshot("value"), SnapshotUpdate.All));
+        f.Run(() => 1.AssertSnapshot("value"), SnapshotUpdate.All);
+        var error = Check.Throws<SnapshotCaptureException>(() => f.Run(() => new ThrowingModel().AssertSnapshot("value"), SnapshotUpdate.All));
         Check.True(error.Message.Contains("$[\"Value\"]", StringComparison.Ordinal));
         Check.Equal("1\n", File.ReadAllText(f.FilePath("value.json")));
     }
@@ -203,7 +215,7 @@ public static partial class Specs
     {
         using var f = new Fixture();
         BaseModel value = new DerivedModel { Id = 1, Extra = "not in the declared contract" };
-        f.Run(() => value.Snapshot("value"), SnapshotUpdate.All);
+        f.Run(() => value.AssertSnapshot("value"), SnapshotUpdate.All);
         using var json = JsonDocument.Parse(File.ReadAllText(f.FilePath("value.json")));
         Check.Equal(1, json.RootElement.GetProperty("Id").GetInt32());
         Check.True(!json.RootElement.TryGetProperty("Extra", out _));
@@ -213,8 +225,8 @@ public static partial class Specs
     {
         using var f = new Fixture();
         var value = new MutableState { Count = 1 };
-        f.Run(() => new { First = value, Second = value }.Snapshot("value"), SnapshotUpdate.All);
-        f.Run(() => new { First = value, Second = value }.Snapshot("value"));
+        f.Run(() => new { First = value, Second = value }.AssertSnapshot("value"), SnapshotUpdate.All);
+        f.Run(() => new { First = value, Second = value }.AssertSnapshot("value"));
     }
 
     private static void InvalidEntryOptionsPoisonApproval()
@@ -222,9 +234,18 @@ public static partial class Specs
         using var f = new Fixture();
         Check.Throws<SnapshotCaptureException>(() => f.Run(() =>
         {
-            try { 1.Snapshot("bad", new() { Comparison = new() { NumericTolerance = -1 } }); }
+            try
+            {
+                1.AssertSnapshot("bad", new()
+                {
+                    Comparison = new()
+                    {
+                        NumericTolerance = -1
+                    }
+                });
+            }
             catch (SnapshotConfigurationException) { }
-            2.Snapshot("good");
+            2.AssertSnapshot("good");
         }, SnapshotUpdate.All));
         Check.True(!File.Exists(f.FilePath("good.json")));
     }
@@ -232,26 +253,32 @@ public static partial class Specs
     private static void CustomComparerFailureCannotBeApproved()
     {
         using var f = new Fixture();
-        f.Run(() => 1.Snapshot("value"), SnapshotUpdate.All);
-        Check.Throws<InvalidOperationException>(() => f.Run(() => 2.Snapshot("value", new() { Comparer = new BrokenComparer() }), SnapshotUpdate.All));
+        f.Run(() => 1.AssertSnapshot("value"), SnapshotUpdate.All);
+        Check.Throws<InvalidOperationException>(() => f.Run(() => 2.AssertSnapshot("value", new() { Comparer = new BrokenComparer() }), SnapshotUpdate.All));
         Check.Equal("1\n", File.ReadAllText(f.FilePath("value.json")));
     }
 
     private static void UnorderedArraysPreserveMultiplicity()
     {
         var comparer = DefaultSnapshotComparer.Instance;
-        Check.True(!comparer.Compare("[1,1,2]", "[1,2,2]", SnapshotFormat.Json, new() { IgnoreArrayOrder = true }).Equal);
-        Check.True(comparer.Compare("[1,1,2]", "[2,1,1]", SnapshotFormat.Json, new() { IgnoreArrayOrder = true }).Equal);
+        Check.True(!comparer.Compare("[1,1,2]", "[1,2,2]", SnapshotFormat.Json, new()
+        {
+            IgnoreArrayOrder = true
+        }).Equal);
+        Check.True(comparer.Compare("[1,1,2]", "[2,1,1]", SnapshotFormat.Json, new()
+        {
+            IgnoreArrayOrder = true
+        }).Equal);
     }
 
     private static void VerifyDoesNotRewriteBaselines()
     {
         using var f = new Fixture();
-        f.Run(() => 1.Snapshot("value"), SnapshotUpdate.All);
+        f.Run(() => 1.AssertSnapshot("value"), SnapshotUpdate.All);
         var path = f.FilePath("value.json");
         var stamp = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         File.SetLastWriteTimeUtc(path, stamp);
-        f.Run(() => 1.Snapshot("value"));
+        f.Run(() => 1.AssertSnapshot("value"));
         Check.Equal(stamp, File.GetLastWriteTimeUtc(path));
     }
 
@@ -262,7 +289,11 @@ public static partial class Specs
         var executable = Environment.ProcessPath!;
         var isHarness = Path.GetFileNameWithoutExtension(executable).Equals("TheLithium.Imprint.Specifications", StringComparison.Ordinal);
         var start = new ProcessStartInfo(isHarness ? executable : "dotnet") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        if (!isHarness) start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "TheLithium.Imprint.Specifications.dll"));
+        if (!isHarness)
+        {
+            start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "TheLithium.Imprint.Specifications.dll"));
+        }
+
         start.ArgumentList.Add("--concurrency-worker");
         start.ArgumentList.Add(f.Root);
         using var first = Process.Start(start)!;
@@ -281,15 +312,34 @@ public static partial class Specs
         }
         finally
         {
-            if (!first.HasExited) first.Kill(entireProcessTree: true);
-            if (!second.HasExited) second.Kill(entireProcessTree: true);
+            if (!first.HasExited)
+            {
+                first.Kill(entireProcessTree: true);
+            }
+
+            if (!second.HasExited)
+            {
+                second.Kill(entireProcessTree: true);
+            }
         }
     }
 }
 
-internal sealed class ThrowingModel { public int Value => throw new InvalidOperationException("getter failed"); }
-internal class BaseModel { public int Id { get; set; } }
-internal sealed class DerivedModel : BaseModel { public string Extra { get; set; } = ""; }
+internal sealed class ThrowingModel
+{
+    public int Value => throw new InvalidOperationException("getter failed");
+}
+internal class BaseModel
+{
+    public int Id
+    {
+        get; set;
+    }
+}
+internal sealed class DerivedModel : BaseModel
+{
+    public string Extra { get; set; } = "";
+}
 internal sealed class BrokenComparer : ISnapshotComparer
 {
     public SnapshotComparisonResult Compare(string expected, string received, SnapshotFormat format, SnapshotComparison options)

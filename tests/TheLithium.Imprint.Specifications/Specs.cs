@@ -75,13 +75,13 @@ public static partial class Specs
     {
         using var f = new Fixture();
         var result = Sample();
-        f.Run(() => { result.Snapshot(); result.Message.Snapshot("stdout"); result.Files.Snapshot("files"); }, SnapshotUpdate.All);
+        f.Run(() => { result.AssertSnapshot(); result.Message.AssertSnapshot("stdout"); result.Files.AssertSnapshot("files"); }, SnapshotUpdate.All);
         Check.True(File.Exists(f.FilePath("result.json")));
-        Check.True(File.Exists(f.FilePath("stdout.snap")));
+        Check.True(File.Exists(f.FilePath("stdout.txt")));
         using var json = JsonDocument.Parse(File.ReadAllText(f.FilePath("result.json")));
         Check.Equal(0, json.RootElement.GetProperty("ExitCode").GetInt32());
         Check.True(!json.RootElement.TryGetProperty("result", out _), "JSON must contain the object, not an entry wrapper.");
-        f.Run(() => { result.Snapshot(); result.Message.Snapshot("stdout"); result.Files.Snapshot("files"); });
+        f.Run(() => { result.AssertSnapshot(); result.Message.AssertSnapshot("stdout"); result.Files.AssertSnapshot("files"); });
     }
 
     private static void AutomaticNames()
@@ -91,25 +91,31 @@ public static partial class Specs
         var state = new MutableState();
         f.Run(() =>
         {
-            result.Snapshot();
-            result.Message.Snapshot();
-            state.Snapshot();
+            result.AssertSnapshot();
+            result.Message.AssertSnapshot();
+            state.AssertSnapshot();
             state.Count++;
-            state.Snapshot();
-            Sample().Snapshot();
+            state.AssertSnapshot();
+            Sample().AssertSnapshot();
         }, SnapshotUpdate.All);
-        foreach (var name in new[] { "result.json", "Message.snap", "state.json", "state-2.json", "snapshot-1.json" })
+        foreach (var name in new[] { "result.json", "Message.txt", "state.json", "state-2.json", "snapshot-1.json" })
+        {
             Check.True(File.Exists(f.FilePath(name)), "Missing automatic name: " + name);
+        }
     }
 
     private static void AnonymousGraphs()
     {
         using var f = new Fixture();
-        var summary = new { ExitCode = 0, Items = new[] { new { Name = "A", Count = 1 }, new { Name = "B", Count = 2 } }.ToList() };
+        var summary = new
+        {
+            ExitCode = 0,
+            Items = new[] { new { Name = "A", Count = 1 }, new { Name = "B", Count = 2 } }.ToList()
+        };
         var dictionary = new Dictionary<string, object>(); // Not captured: static object values are deliberately opaque.
         Check.Equal(0, dictionary.Count);
-        f.Run(() => summary.Snapshot(), SnapshotUpdate.All);
-        f.Run(() => summary.Snapshot());
+        f.Run(() => summary.AssertSnapshot(), SnapshotUpdate.All);
+        f.Run(() => summary.AssertSnapshot());
         using var json = JsonDocument.Parse(File.ReadAllText(f.FilePath("summary.json")));
         Check.Equal("B", json.RootElement.GetProperty("Items")[1].GetProperty("Name").GetString());
     }
@@ -120,7 +126,7 @@ public static partial class Specs
         var tuple = (Code: 1, Text: "a");
         var map = new Dictionary<string, int> { ["z"] = 1, ["a"] = 2 };
         var numbers = new Dictionary<int, string> { [3] = "three" };
-        f.Run(() => { tuple.Snapshot(); map.Snapshot(); numbers.Snapshot(); }, SnapshotUpdate.All);
+        f.Run(() => { tuple.AssertSnapshot(); map.AssertSnapshot(); numbers.AssertSnapshot(); }, SnapshotUpdate.All);
         using var json = JsonDocument.Parse(File.ReadAllText(f.FilePath("tuple.json")));
         Check.Equal(1, json.RootElement.GetProperty("Item1").GetInt32());
         var text = File.ReadAllText(f.FilePath("map.json"));
@@ -133,7 +139,7 @@ public static partial class Specs
     {
         using var f = new Fixture();
         var matrix = new int[,] { { 1, 2 }, { 3, 4 } };
-        f.Run(() => matrix.Snapshot(), SnapshotUpdate.All);
+        f.Run(() => matrix.AssertSnapshot(), SnapshotUpdate.All);
         using var json = JsonDocument.Parse(File.ReadAllText(f.FilePath("matrix.json")));
         Check.Equal(4, json.RootElement[1][1].GetInt32());
     }
@@ -145,7 +151,7 @@ public static partial class Specs
         int? present = 42;
         var mode = Mode.Fast;
         var unknown = (Mode)17;
-        f.Run(() => { absent.Snapshot(); present.Snapshot(); mode.Snapshot(); unknown.Snapshot(); }, SnapshotUpdate.All);
+        f.Run(() => { absent.AssertSnapshot(); present.AssertSnapshot(); mode.AssertSnapshot(); unknown.AssertSnapshot(); }, SnapshotUpdate.All);
         Check.Equal("null\n", File.ReadAllText(f.FilePath("absent.json")));
         Check.Equal("42\n", File.ReadAllText(f.FilePath("present.json")));
         Check.Equal("\"Fast\"\n", File.ReadAllText(f.FilePath("mode.json")));
@@ -157,21 +163,25 @@ public static partial class Specs
         using var f = new Fixture();
         var values = new
         {
-            Date = new DateOnly(2026, 9, 10), Time = new TimeOnly(12, 34, 56),
+            Date = new DateOnly(2026, 9, 10),
+            Time = new TimeOnly(12, 34, 56),
             Id = Guid.Parse("d2719cfb-3bde-4052-826f-a83920f4cf9d"),
             Large = BigInteger.Parse("123456789012345678901234567890123456789", CultureInfo.InvariantCulture),
-            Money = 12.34m, Flag = true, Letter = 'x', Duration = TimeSpan.FromSeconds(30),
+            Money = 12.34m,
+            Flag = true,
+            Letter = 'x',
+            Duration = TimeSpan.FromSeconds(30),
             Address = new Uri("https://example.invalid/path")
         };
-        f.Run(() => values.Snapshot(), SnapshotUpdate.All);
-        f.Run(() => values.Snapshot());
+        f.Run(() => values.AssertSnapshot(), SnapshotUpdate.All);
+        f.Run(() => values.AssertSnapshot());
     }
 
     private static void CaptureIsImmediate()
     {
         using var f = new Fixture();
         var value = new MutableState { Count = 1 };
-        f.Run(() => { value.Snapshot("before"); value.Count = 2; value.Snapshot("after"); }, SnapshotUpdate.All);
+        f.Run(() => { value.AssertSnapshot("before"); value.Count = 2; value.AssertSnapshot("after"); }, SnapshotUpdate.All);
         using var before = JsonDocument.Parse(File.ReadAllText(f.FilePath("before.json")));
         using var after = JsonDocument.Parse(File.ReadAllText(f.FilePath("after.json")));
         Check.Equal(1, before.RootElement.GetProperty("Count").GetInt32());
@@ -181,7 +191,7 @@ public static partial class Specs
     private static void MissingFails()
     {
         using var f = new Fixture();
-        var error = Check.Throws<SnapshotMismatchException>(() => f.Run(() => 1.Snapshot("value")));
+        var error = Check.Throws<SnapshotMismatchException>(() => f.Run(() => 1.AssertSnapshot("value")));
         Check.Equal(SnapshotStatus.Missing, error.Report.Entries.Single().Status);
         Check.True(!Directory.Exists(f.Baselines()));
         Check.True(error.Report.ArtifactDirectory is not null);
@@ -190,18 +200,22 @@ public static partial class Specs
     private static void UpdateReplaces()
     {
         using var f = new Fixture();
-        f.Run(() => 1.Snapshot("value"), SnapshotUpdate.All);
-        f.Run(() => 2.Snapshot("value"), SnapshotUpdate.All);
-        f.Run(() => 2.Snapshot("value"));
+        f.Run(() => 1.AssertSnapshot("value"), SnapshotUpdate.All);
+        f.Run(() => 2.AssertSnapshot("value"), SnapshotUpdate.All);
+        f.Run(() => 2.AssertSnapshot("value"));
     }
 
     private static void MissingPolicyIsTransactional()
     {
         using var f = new Fixture();
-        f.Run(() => 1.Snapshot("one"), SnapshotUpdate.All);
-        f.Run(() => { 1.Snapshot("one"); 2.Snapshot("two"); }, SnapshotUpdate.Missing);
+        f.Run(() => 1.AssertSnapshot("one"), SnapshotUpdate.All);
+        f.Run(() => { 1.AssertSnapshot("one"); 2.AssertSnapshot("two"); }, SnapshotUpdate.Missing);
         Check.Throws<SnapshotMismatchException>(() => f.Run(() =>
-        { 9.Snapshot("one"); 2.Snapshot("two"); 3.Snapshot("three"); }, SnapshotUpdate.Missing));
+        {
+            9.AssertSnapshot("one");
+            2.AssertSnapshot("two");
+            3.AssertSnapshot("three");
+        }, SnapshotUpdate.Missing));
         Check.True(!File.Exists(f.FilePath("three.json")));
         Check.Equal("1\n", File.ReadAllText(f.FilePath("one.json")));
     }
@@ -209,8 +223,8 @@ public static partial class Specs
     private static void AggregatesDifferences()
     {
         using var f = new Fixture();
-        f.Run(() => { 1.Snapshot("a"); 2.Snapshot("b"); }, SnapshotUpdate.All);
-        var error = Check.Throws<SnapshotMismatchException>(() => f.Run(() => { 8.Snapshot("a"); 9.Snapshot("b"); }));
+        f.Run(() => { 1.AssertSnapshot("a"); 2.AssertSnapshot("b"); }, SnapshotUpdate.All);
+        var error = Check.Throws<SnapshotMismatchException>(() => f.Run(() => { 8.AssertSnapshot("a"); 9.AssertSnapshot("b"); }));
         Check.Equal(2, error.Report.Entries.Count(x => x.Status == SnapshotStatus.Changed));
     }
 
@@ -240,30 +254,33 @@ public static partial class Specs
     {
         using var f = new Fixture();
         f.Configure("{\"update\":\"all\",\"textExtension\":\"txt\"}");
-        f.Run(() => "text".Snapshot("value"), SnapshotUpdate.Inherit);
+        f.Run(() => "text".AssertSnapshot("value"), SnapshotUpdate.Inherit);
         Check.True(File.Exists(f.FilePath("value.txt")));
     }
 
     private static void MethodLevelUpdate()
     {
         using var f = new Fixture();
-        f.Run(() => { Snapshots.UpdateCurrentTest(); 1.Snapshot("value"); });
-        f.Run(() => 1.Snapshot("value"));
+        f.Run(() => { Snapshots.UpdateCurrentTest(); 1.AssertSnapshot("value"); });
+        f.Run(() => 1.AssertSnapshot("value"));
     }
 
     private static void LatePolicyChangeFails()
     {
         using var f = new Fixture();
         Check.Throws<SnapshotConfigurationException>(() => f.Run(() =>
-        { 1.Snapshot("value"); Snapshots.UpdateCurrentTest(); }));
+        {
+            1.AssertSnapshot("value");
+            Snapshots.UpdateCurrentTest();
+        }));
         Check.True(!File.Exists(f.FilePath("value.json")));
     }
 
     private static void EntryUpdateCannotDeleteOthers()
     {
         using var f = new Fixture();
-        f.Run(() => { 1.Snapshot("a"); 2.Snapshot("b"); }, SnapshotUpdate.All);
-        Check.Throws<SnapshotMismatchException>(() => f.Run(() => 9.Snapshot("a", new() { Update = SnapshotUpdate.All })));
+        f.Run(() => { 1.AssertSnapshot("a"); 2.AssertSnapshot("b"); }, SnapshotUpdate.All);
+        Check.Throws<SnapshotMismatchException>(() => f.Run(() => 9.AssertSnapshot("a", new() { Update = SnapshotUpdate.All })));
         Check.Equal("1\n", File.ReadAllText(f.FilePath("a.json")));
         Check.True(File.Exists(f.FilePath("b.json")));
     }
@@ -271,27 +288,33 @@ public static partial class Specs
     private static void WholeTestUpdatePrunes()
     {
         using var f = new Fixture();
-        f.Run(() => { 1.Snapshot("a"); 2.Snapshot("b"); }, SnapshotUpdate.All);
-        f.Run(() => 1.Snapshot("a"), SnapshotUpdate.All);
+        f.Run(() => { 1.AssertSnapshot("a"); 2.AssertSnapshot("b"); }, SnapshotUpdate.All);
+        f.Run(() => 1.AssertSnapshot("a"), SnapshotUpdate.All);
         Check.True(!File.Exists(f.FilePath("b.json")));
     }
 
     private static void EmptyRequiresOptIn()
     {
         using var f = new Fixture();
-        f.Run(() => 1.Snapshot("value"), SnapshotUpdate.All);
+        f.Run(() => 1.AssertSnapshot("value"), SnapshotUpdate.All);
         Check.Throws<SnapshotCaptureException>(() => f.Run(() => { }, SnapshotUpdate.All));
-        Snapshots.Run(() => { }, f.Options(SnapshotUpdate.All) with { AllowEmpty = true });
+        Snapshots.Run(() => { }, f.Options(SnapshotUpdate.All) with
+        {
+            AllowEmpty = true
+        });
         Check.True(!File.Exists(f.FilePath("value.json")));
     }
 
     private static void LaterAssertionPreventsApproval()
     {
         using var f = new Fixture();
-        f.Run(() => 1.Snapshot("value"), SnapshotUpdate.All);
+        f.Run(() => 1.AssertSnapshot("value"), SnapshotUpdate.All);
         var sentinel = new InvalidOperationException("later assertion");
         var error = Check.Throws<InvalidOperationException>(() => f.Run(() =>
-        { 2.Snapshot("value"); throw sentinel; }, SnapshotUpdate.All));
+        {
+            2.AssertSnapshot("value");
+            throw sentinel;
+        }, SnapshotUpdate.All));
         Check.True(ReferenceEquals(sentinel, error));
         Check.Equal("1\n", File.ReadAllText(f.FilePath("value.json")));
     }
@@ -299,16 +322,17 @@ public static partial class Specs
     private static void CaughtCaptureStillPoisonsTest()
     {
         using var f = new Fixture();
-        var node = new Link(); node.Next = node;
+        var node = new Link();
+        node.Next = node;
         Check.Throws<SnapshotCaptureException>(() => f.Run(() =>
         {
-            Check.Throws<SnapshotCaptureException>(() => node.Snapshot("cycle"));
-            1.Snapshot("other");
+            Check.Throws<SnapshotCaptureException>(() => node.AssertSnapshot("cycle"));
+            1.AssertSnapshot("other");
         }, SnapshotUpdate.All));
         Check.True(!File.Exists(f.FilePath("other.json")));
     }
 
-    private static void CaptureGeneric<T>(T value) => value.Snapshot("generic");
+    private static void CaptureGeneric<T>(T value) => value.AssertSnapshot("generic");
 
     private static void GenericIncludeAndUnsupportedType()
     {
@@ -323,9 +347,11 @@ public static partial class Specs
     {
         using var f = new Fixture();
         var value = new PrivateValue(7);
-        f.Run(() => value.Snapshot(static (writer, item, _) =>
+        f.Run(() => value.AssertSnapshot(static (writer, item, _) =>
         {
-            writer.WriteStartObject(); writer.WriteNumber("Code", item.Code); writer.WriteEndObject();
+            writer.WriteStartObject();
+            writer.WriteNumber("Code", item.Code);
+            writer.WriteEndObject();
         }, "private"), SnapshotUpdate.All);
         Check.True(File.ReadAllText(f.FilePath("private.json")).Contains("7", StringComparison.Ordinal));
     }
@@ -335,14 +361,24 @@ public static partial class Specs
         var comparer = DefaultSnapshotComparer.Instance;
         Check.True(comparer.Compare("{\"b\":2,\"a\":1}", "{\"a\":1.0,\"b\":2}", SnapshotFormat.Json, new()).Equal);
         Check.True(!comparer.Compare("[1,2]", "[2,1]", SnapshotFormat.Json, new()).Equal);
-        Check.True(comparer.Compare("[1,2]", "[2,1]", SnapshotFormat.Json, new() { IgnoreArrayOrder = true }).Equal);
-        Check.True(!comparer.Compare("[1,1]", "[1,2]", SnapshotFormat.Json, new() { IgnoreArrayOrder = true }).Equal);
+        Check.True(comparer.Compare("[1,2]", "[2,1]", SnapshotFormat.Json, new()
+        {
+            IgnoreArrayOrder = true
+        }).Equal);
+        Check.True(!comparer.Compare("[1,1]", "[1,2]", SnapshotFormat.Json, new()
+        {
+            IgnoreArrayOrder = true
+        }).Equal);
     }
 
     private static void UnorderedToleranceUsesMaximumMatching()
     {
         Check.True(DefaultSnapshotComparer.Instance.Compare("[0,1]", "[0.5,-0.5]", SnapshotFormat.Json,
-            new() { IgnoreArrayOrder = true, NumericTolerance = 0.6m }).Equal);
+            new()
+            {
+                IgnoreArrayOrder = true,
+                NumericTolerance = 0.6m
+            }).Equal);
     }
 
     private static void ExactLargeNumbers()
@@ -351,17 +387,27 @@ public static partial class Specs
         Check.True(!c.Compare("9007199254740992", "9007199254740993", SnapshotFormat.Json, new()).Equal);
         Check.True(c.Compare("1e999999", "10e999998", SnapshotFormat.Json, new()).Equal);
         Check.True(c.Compare("0.10000000000000000000000000001", "0.1", SnapshotFormat.Json,
-            new() { NumericTolerance = 0.0000000000000000000000000001m }).Equal);
+            new()
+            {
+                NumericTolerance = 0.0000000000000000000000000001m
+            }).Equal);
     }
 
     private static void ComparisonDoesNotRewriteData()
     {
         using var f = new Fixture();
         const string original = "hello  \r\n";
-        f.Run(() => original.Snapshot("text"), SnapshotUpdate.All);
-        f.Run(() => "HELLO\n".Snapshot("text", new()
-        { Comparison = new() { IgnoreStringCase = true, IgnoreTrailingWhitespace = true, IgnoreLineEndings = true } }));
-        Check.Equal(original, File.ReadAllText(f.FilePath("text.snap")));
+        f.Run(() => original.AssertSnapshot("text"), SnapshotUpdate.All);
+        f.Run(() => "HELLO\n".AssertSnapshot("text", new()
+        {
+            Comparison = new()
+            {
+                IgnoreStringCase = true,
+                IgnoreTrailingWhitespace = true,
+                IgnoreLineEndings = true
+            }
+        }));
+        Check.Equal(original, File.ReadAllText(f.FilePath("text.txt")));
     }
 
     private static void RawJsonAndNull()
@@ -370,20 +416,23 @@ public static partial class Specs
         string? empty = null;
         f.Run(() =>
         {
-            "{\"answer\":42}".Snapshot("json", new() { Format = SnapshotFormat.Json });
-            "{\"answer\":42}".Snapshot("text");
-            empty.Snapshot();
+            "{\"answer\":42}".AssertSnapshot("json", new()
+            {
+                Format = SnapshotFormat.Json
+            });
+            "{\"answer\":42}".AssertSnapshot("text");
+            empty.AssertSnapshot();
         }, SnapshotUpdate.All);
-        Check.True(File.Exists(f.FilePath("json.json")) && File.Exists(f.FilePath("text.snap")));
+        Check.True(File.Exists(f.FilePath("json.json")) && File.Exists(f.FilePath("text.txt")));
         Check.Equal("null\n", File.ReadAllText(f.FilePath("empty.json")));
     }
 
     private static void InvalidJsonCannotBeApproved()
     {
         using var f = new Fixture();
-        f.Run(() => 1.Snapshot("value"), SnapshotUpdate.All);
+        f.Run(() => 1.AssertSnapshot("value"), SnapshotUpdate.All);
         File.WriteAllText(f.FilePath("value.json"), "{broken");
-        Check.Throws<JsonException>(() => f.Run(() => 2.Snapshot("value"), SnapshotUpdate.All));
+        Check.Throws<JsonException>(() => f.Run(() => 2.AssertSnapshot("value"), SnapshotUpdate.All));
         Check.Equal("{broken", File.ReadAllText(f.FilePath("value.json")));
     }
 
@@ -391,7 +440,10 @@ public static partial class Specs
     {
         using var f = new Fixture();
         Check.Throws<SnapshotCaptureException>(() => f.Run(() =>
-            "{\"a\":1,\"a\":2}".Snapshot("value", new() { Format = SnapshotFormat.Json }), SnapshotUpdate.All));
+            "{\"a\":1,\"a\":2}".AssertSnapshot("value", new()
+            {
+                Format = SnapshotFormat.Json
+            }), SnapshotUpdate.All));
         Check.True(!File.Exists(f.FilePath("value.json")));
     }
 
@@ -400,14 +452,24 @@ public static partial class Specs
         using var f = new Fixture();
         using var token = new CancellationTokenSource();
         Check.Throws<OperationCanceledException>(() => Snapshots.Run(() =>
-        { 1.Snapshot("value"); token.Cancel(); }, f.Options(SnapshotUpdate.All) with { CancellationToken = token.Token }));
+        {
+            1.AssertSnapshot("value");
+            token.Cancel();
+        }, f.Options(SnapshotUpdate.All) with
+        {
+            CancellationToken = token.Token
+        }));
         Check.True(!File.Exists(f.FilePath("value.json")));
     }
 
     private static void DisposalDoesNotApprove()
     {
         using var f = new Fixture();
-        using (Snapshots.Begin(f.Options(SnapshotUpdate.All))) 1.Snapshot("value");
+        using (Snapshots.Begin(f.Options(SnapshotUpdate.All)))
+        {
+            1.AssertSnapshot("value");
+        }
+
         Check.True(!File.Exists(f.FilePath("value.json")));
     }
 
@@ -415,7 +477,7 @@ public static partial class Specs
     {
         using var f = new Fixture();
         using var scope = Snapshots.Begin(f.Options(SnapshotUpdate.All));
-        1.Snapshot("value");
+        1.AssertSnapshot("value");
         scope.Complete();
         Check.Throws<SnapshotConfigurationException>(() => scope.Complete());
     }
@@ -426,7 +488,7 @@ public static partial class Specs
         await Snapshots.RunAsync(async () =>
         {
             await Task.Yield();
-            await Task.WhenAll(Enumerable.Range(0, 10).Select(i => Task.Run(() => i.Snapshot("item-" + i))));
+            await Task.WhenAll(Enumerable.Range(0, 10).Select(i => Task.Run(() => i.AssertSnapshot("item-" + i))));
         }, f.Options(SnapshotUpdate.All));
         Check.Equal(10, Directory.GetFiles(f.Baselines(), "*.json").Length);
     }
@@ -437,20 +499,23 @@ public static partial class Specs
         await Task.WhenAll(Enumerable.Range(0, 8).Select(i => Snapshots.RunAsync(async () =>
         {
             await Task.Delay(1);
-            i.Snapshot("value");
+            i.AssertSnapshot("value");
         }, f.Options(SnapshotUpdate.All, "Test" + i))));
-        for (var i = 0; i < 8; i++) Check.Equal(i.ToString(CultureInfo.InvariantCulture) + "\n", File.ReadAllText(f.FilePath("value.json", "Test" + i)));
+        for (var i = 0; i < 8; i++)
+        {
+            Check.Equal(i.ToString(CultureInfo.InvariantCulture) + "\n", File.ReadAllText(f.FilePath("value.json", "Test" + i)));
+        }
     }
 
     private static void ConcurrentUpdatesConflict()
     {
         using var f = new Fixture();
-        f.Run(() => 1.Snapshot("value"), SnapshotUpdate.All);
+        f.Run(() => 1.AssertSnapshot("value"), SnapshotUpdate.All);
         using var left = Snapshots.Begin(f.Options(SnapshotUpdate.All));
-        2.Snapshot("value");
+        2.AssertSnapshot("value");
         using (var right = Snapshots.Begin(f.Options(SnapshotUpdate.All)))
         {
-            3.Snapshot("value");
+            3.AssertSnapshot("value");
             right.Complete();
         }
         Check.Throws<SnapshotConflictException>(() => left.Complete());
@@ -460,73 +525,104 @@ public static partial class Specs
     private static void OwnershipCollisionsFail()
     {
         using var f = new Fixture();
-        f.Run(() => 1.Snapshot("value"), SnapshotUpdate.All);
+        f.Run(() => 1.AssertSnapshot("value"), SnapshotUpdate.All);
         var options = f.Options(SnapshotUpdate.All);
-        options = options with { Identity = options.Identity! with { LogicalId = "another-logical-test" } };
-        Check.Throws<SnapshotConflictException>(() => Snapshots.Run(() => 1.Snapshot("value"), options));
+        options = options with
+        {
+            Identity = options.Identity! with
+            {
+                LogicalId = "another-logical-test"
+            }
+        };
+        Check.Throws<SnapshotConflictException>(() => Snapshots.Run(() => 1.AssertSnapshot("value"), options));
     }
 
     private static void PortableAndDuplicateNames()
     {
         using var f = new Fixture();
-        f.Run(() => 1.Snapshot("../../escape"), SnapshotUpdate.All);
+        f.Run(() => 1.AssertSnapshot("../../escape"), SnapshotUpdate.All);
         Check.Equal(1, Directory.GetFiles(f.Baselines(), "*.json").Length);
         Check.True(!File.Exists(Path.Combine(f.Root, "escape.json")));
         Check.Throws<SnapshotCaptureException>(() => f.Run(() =>
-        { 1.Snapshot("Same"); 2.Snapshot("same"); }, SnapshotUpdate.All, "Duplicates"));
+        {
+            1.AssertSnapshot("Same");
+            2.AssertSnapshot("same");
+        }, SnapshotUpdate.All, "Duplicates"));
     }
 
     private static void SizeAndDepthLimits()
     {
         using var f = new Fixture();
-        Check.Throws<SnapshotCaptureException>(() => Snapshots.Run(() => new string('x', 100).Snapshot("value"),
-            f.Options(SnapshotUpdate.All) with { MaxBytes = 16 }));
-        var nested = new { A = new { B = new { C = 1 } } };
-        Check.Throws<SnapshotCaptureException>(() => Snapshots.Run(() => nested.Snapshot("value"),
-            f.Options(SnapshotUpdate.All) with { MaxDepth = 2 }));
+        Check.Throws<SnapshotCaptureException>(() => Snapshots.Run(() => new string('x', 100).AssertSnapshot("value"),
+            f.Options(SnapshotUpdate.All) with
+            {
+                MaxBytes = 16
+            }));
+        var nested = new
+        {
+            A = new
+            {
+                B = new
+                {
+                    C = 1
+                }
+            }
+        };
+        Check.Throws<SnapshotCaptureException>(() => Snapshots.Run(() => nested.AssertSnapshot("value"),
+            f.Options(SnapshotUpdate.All) with
+            {
+                MaxDepth = 2
+            }));
     }
 
     private static void StrictConfiguration()
     {
         using var f = new Fixture();
         f.Configure("{\"udpate\":\"all\"}");
-        Check.Throws<SnapshotConfigurationException>(() => f.Run(() => 1.Snapshot("value")));
+        Check.Throws<SnapshotConfigurationException>(() => f.Run(() => 1.AssertSnapshot("value")));
     }
 
-    private static void NoImplicitScope() => Check.Throws<SnapshotConfigurationException>(() => 1.Snapshot("value"));
+    private static void NoImplicitScope() => Check.Throws<SnapshotConfigurationException>(() => 1.AssertSnapshot("value"));
 
     private static void EntryFormatMigration()
     {
         using var f = new Fixture();
-        f.Run(() => { "{\"v\":1}".Snapshot("value"); 2.Snapshot("other"); }, SnapshotUpdate.All);
+        f.Run(() => { "{\"v\":1}".AssertSnapshot("value"); 2.AssertSnapshot("other"); }, SnapshotUpdate.All);
         f.Run(() =>
         {
-            "{\"v\":1}".Snapshot("value", new() { Format = SnapshotFormat.Json, Update = SnapshotUpdate.All });
-            2.Snapshot("other");
+            "{\"v\":1}".AssertSnapshot("value", new()
+            {
+                Format = SnapshotFormat.Json,
+                Update = SnapshotUpdate.All
+            });
+            2.AssertSnapshot("other");
         });
-        Check.True(!File.Exists(f.FilePath("value.snap")) && File.Exists(f.FilePath("value.json")));
+        Check.True(!File.Exists(f.FilePath("value.txt")) && File.Exists(f.FilePath("value.json")));
     }
 
     private static void AmbiguousBaselinesFail()
     {
         using var f = new Fixture();
-        f.Run(() => "one".Snapshot("value"), SnapshotUpdate.All);
-        File.WriteAllText(f.FilePath("value.txt"), "one");
-        Check.Throws<SnapshotConflictException>(() => f.Run(() => "two".Snapshot("value"), SnapshotUpdate.All));
+        f.Run(() => "one".AssertSnapshot("value"), SnapshotUpdate.All);
+        File.WriteAllText(f.FilePath("value.snap"), "one");
+        Check.Throws<SnapshotConflictException>(() => f.Run(() => "two".AssertSnapshot("value"), SnapshotUpdate.All));
     }
 
     private static string SimulateInterruptedCommit(Fixture f)
     {
-        f.Run(() => 1.Snapshot("value"), SnapshotUpdate.All);
-        var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("SUITE/EXAMPLE"))).ToLowerInvariant();
+        f.Run(() => 1.AssertSnapshot("value"), SnapshotUpdate.All);
+        var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(f.Baselines().Replace('\\', '/').ToUpperInvariant()))).ToLowerInvariant();
         string fingerprint;
-        using (var scope = Snapshots.Begin(f.Options())) fingerprint = scope.BaselineFingerprint;
-        var metadata = Path.Combine(f.Root, "__snapshots__", ".imprint");
+        using (var scope = Snapshots.Begin(f.Options()))
+        {
+            fingerprint = scope.BaselineFingerprint;
+        }
+
+        var metadata = Path.Combine(f.Root, "artifacts", "imprint", "storage");
         var journal = Path.Combine(metadata, "transactions", key);
         Directory.CreateDirectory(Path.Combine(journal, "before"));
         Directory.CreateDirectory(Path.Combine(journal, "after"));
         File.Copy(f.FilePath("value.json"), Path.Combine(journal, "before", "value.json"));
-        File.Copy(Path.Combine(metadata, "owners", key + ".owner"), Path.Combine(journal, "owner.before"));
         File.WriteAllText(Path.Combine(journal, "before.fingerprint"), fingerprint);
         File.WriteAllText(Path.Combine(journal, "prepared"), "TheLithium.Imprint/1\n");
         File.WriteAllText(f.FilePath("value.json"), "9\n");
@@ -537,7 +633,7 @@ public static partial class Specs
     {
         using var f = new Fixture();
         var journal = SimulateInterruptedCommit(f);
-        f.Run(() => 1.Snapshot("value"));
+        f.Run(() => 1.AssertSnapshot("value"));
         Check.Equal("1\n", File.ReadAllText(f.FilePath("value.json")));
         Check.True(!Directory.Exists(journal));
     }
@@ -547,9 +643,12 @@ public static partial class Specs
         using var f = new Fixture();
         SimulateInterruptedCommit(f);
         using (new EnvironmentValue("IMPRINT_READ_ONLY", "true"))
-            Check.Throws<SnapshotConflictException>(() => f.Run(() => 1.Snapshot("value")));
+        {
+            Check.Throws<SnapshotConflictException>(() => f.Run(() => 1.AssertSnapshot("value")));
+        }
+
         Check.Equal("9\n", File.ReadAllText(f.FilePath("value.json")));
-        f.Run(() => 1.Snapshot("value"));
+        f.Run(() => 1.AssertSnapshot("value"));
     }
 
     private static void GlobalVerifyOverridesSource()
@@ -557,7 +656,10 @@ public static partial class Specs
         using var f = new Fixture();
         using var verify = new EnvironmentValue("IMPRINT_UPDATE", "verify");
         Check.Throws<SnapshotMismatchException>(() => f.Run(() =>
-            1.Snapshot("value", new() { Update = SnapshotUpdate.All }), SnapshotUpdate.All));
+            1.AssertSnapshot("value", new()
+            {
+                Update = SnapshotUpdate.All
+            }), SnapshotUpdate.All));
         Check.True(!File.Exists(f.FilePath("value.json")));
     }
 
@@ -566,17 +668,17 @@ public static partial class Specs
         using var f = new Fixture();
         using var update = new EnvironmentValue("IMPRINT_UPDATE", "all");
         using var selection = new EnvironmentValue("IMPRINT_TEST", "*Allowed*");
-        f.Run(() => 1.Snapshot("value"), SnapshotUpdate.Verify, "Allowed");
-        Check.Throws<SnapshotMismatchException>(() => f.Run(() => 1.Snapshot("value"), SnapshotUpdate.All, "Denied"));
+        f.Run(() => 1.AssertSnapshot("value"), SnapshotUpdate.Verify, "Allowed");
+        Check.Throws<SnapshotMismatchException>(() => f.Run(() => 1.AssertSnapshot("value"), SnapshotUpdate.All, "Denied"));
     }
 
     private static void CiRequiresExplicitWritePermission()
     {
         using var f = new Fixture();
         using var ci = new EnvironmentValue("CI", "true");
-        Check.Throws<SnapshotMismatchException>(() => f.Run(() => 1.Snapshot("value"), SnapshotUpdate.All));
+        Check.Throws<SnapshotMismatchException>(() => f.Run(() => 1.AssertSnapshot("value"), SnapshotUpdate.All));
         using var allowed = new EnvironmentValue("IMPRINT_ALLOW_CI_UPDATE", "true");
-        f.Run(() => 1.Snapshot("value"), SnapshotUpdate.All);
+        f.Run(() => 1.AssertSnapshot("value"), SnapshotUpdate.All);
     }
 
     private sealed class LengthComparer : ISnapshotComparer
@@ -587,9 +689,9 @@ public static partial class Specs
     private static void CustomComparer()
     {
         using var f = new Fixture();
-        f.Run(() => "abc".Snapshot("value"), SnapshotUpdate.All);
-        f.Run(() => "xyz".Snapshot("value", new() { Comparer = new LengthComparer() }));
-        Check.Equal("abc", File.ReadAllText(f.FilePath("value.snap")));
+        f.Run(() => "abc".AssertSnapshot("value"), SnapshotUpdate.All);
+        f.Run(() => "xyz".AssertSnapshot("value", new() { Comparer = new LengthComparer() }));
+        Check.Equal("abc", File.ReadAllText(f.FilePath("value.txt")));
     }
 
     private static void CultureDoesNotChangeJson()
@@ -600,18 +702,18 @@ public static partial class Specs
         {
             CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("de-CH");
             12.5m.ToString(CultureInfo.CurrentCulture); // This culture intentionally uses a different context.
-            f.Run(() => new { Value = 12.5m }.Snapshot("value"), SnapshotUpdate.All);
+            f.Run(() => new { Value = 12.5m }.AssertSnapshot("value"), SnapshotUpdate.All);
             CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("fr-FR");
-            f.Run(() => new { Value = 12.5m }.Snapshot("value"));
+            f.Run(() => new { Value = 12.5m }.AssertSnapshot("value"));
         }
         finally { CultureInfo.CurrentCulture = old; }
     }
     private static void VerificationDetectsConcurrentChanges()
     {
         using var f = new Fixture();
-        f.Run(() => 1.Snapshot("value"), SnapshotUpdate.All);
+        f.Run(() => 1.AssertSnapshot("value"), SnapshotUpdate.All);
         using var scope = Snapshots.Begin(f.Options());
-        1.Snapshot("value");
+        1.AssertSnapshot("value");
         File.WriteAllText(f.FilePath("value.json"), "2\n");
         Check.Throws<SnapshotConflictException>(() => scope.Complete());
         Check.Equal("2\n", File.ReadAllText(f.FilePath("value.json")));
@@ -622,7 +724,7 @@ public static partial class Specs
         using var f = new Fixture();
         var journal = SimulateInterruptedCommit(f);
         File.Delete(Path.Combine(journal, "before", "value.json"));
-        Check.Throws<SnapshotConflictException>(() => f.Run(() => 1.Snapshot("value")));
+        Check.Throws<SnapshotConflictException>(() => f.Run(() => 1.AssertSnapshot("value")));
         Check.Equal("9\n", File.ReadAllText(f.FilePath("value.json")));
         Check.True(Directory.Exists(journal), "A corrupt backup must be preserved for inspection.");
     }
@@ -633,7 +735,7 @@ public static partial class Specs
         foreach (var property in new[] { "update", "directoryName", "artifactDirectory" })
         {
             f.Configure("{\"" + property + "\":null}");
-            Check.Throws<SnapshotConfigurationException>(() => f.Run(() => 1.Snapshot("value")));
+            Check.Throws<SnapshotConfigurationException>(() => f.Run(() => 1.AssertSnapshot("value")));
         }
     }
 

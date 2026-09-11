@@ -1,0 +1,22 @@
+<Project>
+  <PropertyGroup>
+    <ImprintBuildAssembly Condition="'$(ImprintBuildAssembly)' == ''">$(MSBuildThisFileDirectory)../tasks/netstandard2.0/TheLithium.Imprint.Build.dll</ImprintBuildAssembly>
+  </PropertyGroup>
+  <UsingTask TaskName="TheLithium.Imprint.Build.InstrumentSnapshotTests" AssemblyFile="$(ImprintBuildAssembly)"
+             TaskFactory="TaskHostFactory" Runtime="NET" />
+  <Target Name="InstrumentImprintTests" BeforeTargets="CoreCompile"
+          DependsOnTargets="ResolveReferences"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <InstrumentSnapshotTests Sources="@(Compile)" References="@(ReferencePath)"
+                             DefineConstants="$(DefineConstants)"
+                             OutputDirectory="$(IntermediateOutputPath)imprint">
+      <Output TaskParameter="ReplacedSources" ItemName="ImprintReplacedSources" />
+      <Output TaskParameter="InstrumentedSources" ItemName="ImprintInstrumentedSources" />
+    </InstrumentSnapshotTests>
+    <ItemGroup>
+      <Compile Remove="@(ImprintReplacedSources)" />
+      <Compile Include="@(ImprintInstrumentedSources)" />
+      <FileWrites Include="@(ImprintInstrumentedSources)" />
+    </ItemGroup>
+  </Target>
+</Project>

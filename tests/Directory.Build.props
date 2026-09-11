@@ -2,20 +2,24 @@
   <Import Project="../Directory.Build.props" />
   <PropertyGroup>
     <IsPackable>false</IsPackable>
+    <ImprintDevelopmentBuild>true</ImprintDevelopmentBuild>
     <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>$(ArtifactsPath)/obj/$(MSBuildProjectName)/generated</CompilerGeneratedFilesOutputPath>
   </PropertyGroup>
   <ItemGroup Condition="'$(UsePackageReferences)' != 'true'">
+    <ProjectReference Include="$(MSBuildThisFileDirectory)../src/TheLithium.Imprint.Build/TheLithium.Imprint.Build.csproj" ReferenceOutputAssembly="false" GlobalPropertiesToRemove="PublishAot;RuntimeIdentifier;SelfContained" />
     <ProjectReference Include="$(MSBuildThisFileDirectory)../src/TheLithium.Imprint.Core/TheLithium.Imprint.Core.csproj" />
     <ProjectReference Include="$(MSBuildThisFileDirectory)../src/TheLithium.Imprint.Generator/TheLithium.Imprint.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" GlobalPropertiesToRemove="PublishAot;RuntimeIdentifier;SelfContained" />
     <CompilerVisibleProperty Include="MSBuildProjectDirectory" />
     <CompilerVisibleProperty Include="MSBuildProjectName" />
+    <CompilerVisibleProperty Include="ArtifactsPath" />
   </ItemGroup>
   <ItemGroup Condition="'$(UsePackageReferences)' == 'true'">
     <PackageReference Include="TheLithium.Imprint" Version="$(Version)" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="$(MSBuildThisFileDirectory)Shared/TestEnvironment.cs" Link="TestEnvironment.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Shared/GlobalUsings.cs" Link="GlobalUsings.cs" />
   </ItemGroup>
 </Project>

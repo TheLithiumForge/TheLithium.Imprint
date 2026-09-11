@@ -8,36 +8,40 @@ namespace TheLithium.Imprint.MSTest.Tests;
 public sealed class FrameworkTests
 {
     [TestMethod(DisplayName = "MSTest explicit display name")]
-    public void DisplayName() => Snapshots.Run(() =>
+    public void DisplayName()
     {
-        Assert.IsTrue(Snapshots.Current.BaselineDirectory.EndsWith("MSTest explicit display name", StringComparison.Ordinal));
-        true.Snapshot("supported");
-    });
+        Assert.IsTrue(Snapshots.Current.BaselineDirectory.EndsWith(nameof(DisplayName), StringComparison.Ordinal));
+        true.AssertSnapshot("supported");
+    }
 
     [TestMethod]
     [Description("MSTest creates readable snapshots")]
-    public void Description() => Snapshots.Run(() =>
+    public void Description()
     {
-        Assert.IsTrue(Snapshots.Current.BaselineDirectory.EndsWith("MSTest creates readable snapshots", StringComparison.Ordinal));
-        new { Framework = "MSTest", Supported = true }.Snapshot("result");
-        "MSTest output".Snapshot("output");
-    });
+        Assert.IsTrue(Snapshots.Current.BaselineDirectory.EndsWith(nameof(Description), StringComparison.Ordinal));
+        new
+        {
+            Framework = "MSTest",
+            Supported = true
+        }.AssertSnapshot("result");
+        "MSTest output".AssertSnapshot("output");
+    }
 
     [TestMethod]
     public async Task AsyncTest()
     {
-        await Snapshots.RunAsync(async () =>
-        {
-            await Task.Yield();
-            42.Snapshot("answer");
-        });
+        await Task.Yield();
+        42.AssertSnapshot("answer");
     }
 
     [TestMethod]
     [DataRow("small", 1)]
     [DataRow("large", 100)]
-    public void Parameterized(string caseName, int count) => Snapshots.Run(() =>
+    public void Parameterized(string caseName, int count)
     {
-        new { Count = count }.Snapshot("result");
-    }, new() { Case = caseName });
+        new
+        {
+            Count = count
+        }.AssertSnapshot("result");
+    }
 }

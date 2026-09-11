@@ -5,25 +5,46 @@ using TheLithium.Imprint;
 namespace TheLithium.Imprint.Specifications;
 
 internal sealed record Result(int ExitCode, string Message, List<string> Files);
-internal sealed class MutableState { public int Count { get; set; } }
-internal sealed class Link { public string Name { get; set; } = "node"; public Link? Next { get; set; } }
+internal sealed class MutableState
+{
+    public int Count
+    {
+        get; set;
+    }
+}
+internal sealed class Link
+{
+    public string Name { get; set; } = "node"; public Link? Next
+    {
+        get; set;
+    }
+}
 internal sealed record GenericOnly(int Id);
-internal sealed class NotRooted { public int Value { get; set; } = 1; }
-internal enum Mode { None = 0, AliasForNone = 0, Fast = 1 }
+internal sealed class NotRooted
+{
+    public int Value { get; set; } = 1;
+}
+internal enum Mode
+{
+    None = 0, AliasForNone = 0, Fast = 1
+}
 
 [SnapshotSettings(Update = SnapshotUpdate.All, Name = "Generated suite")]
 internal static class GeneratedFixtures
 {
-    internal static void ClassDefault() => Snapshots.Run(() => 1.Snapshot("value"));
+    internal static void ClassDefault() => Snapshots.Run(() => 1.AssertSnapshot("value"));
 
     [SnapshotSettings(Update = SnapshotUpdate.Verify)]
-    internal static void MethodVerify() => Snapshots.Run(() => 1.Snapshot("value"));
+    internal static void MethodVerify() => Snapshots.Run(() => 1.AssertSnapshot("value"));
 
     [SnapshotSettings(Name = "Readable method")]
-    internal static void RenamedMethod() => Snapshots.Run(() => new { Value = 1 }.Snapshot("value"));
+    internal static void RenamedMethod() => Snapshots.Run(() => new { Value = 1 }.AssertSnapshot("value"));
 
-    internal static void Parameterized(string name) => Snapshots.Run(() => name.Snapshot("value"));
+    internal static void Parameterized(string name) => Snapshots.Run(() => name.AssertSnapshot("value"));
 
     internal static void ParameterizedWithCase(string name) => Snapshots.Run(
-        () => name.Snapshot("value"), new() { Case = name });
+        () => name.AssertSnapshot("value"), new()
+        {
+            Case = name
+        });
 }

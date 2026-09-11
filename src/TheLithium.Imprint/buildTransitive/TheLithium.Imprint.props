@@ -2,5 +2,6 @@
   <ItemGroup>
     <CompilerVisibleProperty Include="MSBuildProjectDirectory" />
     <CompilerVisibleProperty Include="MSBuildProjectName" />
+    <CompilerVisibleProperty Include="ArtifactsPath" />
   </ItemGroup>
 </Project>

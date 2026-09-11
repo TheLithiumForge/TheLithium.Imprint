@@ -67,13 +67,23 @@ public static class SnapshotWriters
     public static void Write<T>(Utf8JsonWriter writer, T value, SnapshotWriteContext context)
     {
         using var frame = context.Enter(value);
-        if (value is null) { writer.WriteNullValue(); return; }
+        if (value is null)
+        {
+            writer.WriteNullValue();
+            return;
+        }
         var implementation = Volatile.Read(ref Slot<T>.Writer);
         if (implementation is null)
+        {
             throw new SnapshotCaptureException($"No static snapshot writer is registered at {context.Path}. " +
                 "Use a supported static type, [assembly: SnapshotInclude<YourType>], an explicit writer, or a projection. " +
                 "There is no runtime reflection or ToString fallback.");
-        try { implementation(writer, value, context); }
+        }
+
+        try
+        {
+            implementation(writer, value, context);
+        }
         catch (SnapshotException) { throw; }
         catch (OperationCanceledException) { throw; }
         catch (Exception error)
