@@ -1,7 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Description>Easy snapshot assertions for any .NET test framework. Includes the Native AOT runtime and source generator.</Description>
+    <Description>Easy snapshot assertions for any .NET test framework. Includes the Native AOT runtime dependency, source generator, and build integration.</Description>
     <IncludeBuildOutput>false</IncludeBuildOutput>
+    <NoWarn>$(NoWarn);NU5100</NoWarn>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>snapshot;testing;nativeaot;xunit;nunit;mstest</PackageTags>
   </PropertyGroup>
@@ -33,7 +34,7 @@
       <Output TaskParameter="TargetOutputs" ItemName="SnapshotBuildAssembly" />
     </MSBuild>
     <ItemGroup>
-      <SnapshotBuildPayload Include="@(SnapshotBuildAssembly->'%(RootDir)%(Directory)*.dll')" />
+      <SnapshotBuildPayload Include="$(ArtifactsPath)/bin/TheLithium.Imprint.Build/$(Configuration.ToLowerInvariant())/*.dll" />
       <None Include="@(SnapshotBuildPayload)" Pack="true" PackagePath="tasks/netstandard2.0" Visible="false" />
     </ItemGroup>
   </Target>
