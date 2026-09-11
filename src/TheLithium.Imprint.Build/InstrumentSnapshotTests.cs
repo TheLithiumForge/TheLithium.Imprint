@@ -90,6 +90,12 @@ public sealed class InstrumentSnapshotTests : Task
                         continue;
                     }
 
+                    if (asyncModifier.RawKind != 0 && !CompilerTypeFacts.IsSupportedAsyncReturn(symbol.ReturnType))
+                    {
+                        ReportUnsupported(tree, method, "An async snapshot test must return Task or ValueTask.");
+                        continue;
+                    }
+
                     if (asyncModifier.RawKind != 0)
                     {
                         edits.Add(new TextChange(asyncModifier.Span, new string(' ', asyncModifier.Span.Length)));
@@ -164,7 +170,7 @@ public sealed class InstrumentSnapshotTests : Task
             runner = named.Name == "ValueTask" ? "RunValueTask" : "RunAsync";
         }
 
-        var parameters = symbol.Parameters.Where(parameter => parameter.Type.ToDisplayString() != "System.Threading.CancellationToken").ToArray();
+        var parameters = symbol.Parameters.Where(parameter => !CompilerTypeFacts.IsCancellationToken(parameter.Type)).ToArray();
         var options = "new global::TheLithium.Imprint.SnapshotTestOptions()";
         if (parameters.Length != 0)
         {
@@ -199,4 +205,5 @@ public sealed class InstrumentSnapshotTests : Task
     private static string CodeLiteral(string text) => SymbolDisplay.FormatLiteral(text, quote: true);
 
     private static string LineDirectiveLiteral(string text) => $"\"{text.Replace("\"", "\\\"")}\"";
+
 }

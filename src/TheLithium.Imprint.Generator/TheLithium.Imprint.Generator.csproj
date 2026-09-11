@@ -10,6 +10,7 @@
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../TheLithium.Imprint.Build/CompilerTypeFacts.cs" Link="CompilerTypeFacts.cs" />
     <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
     <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" PrivateAssets="all" />

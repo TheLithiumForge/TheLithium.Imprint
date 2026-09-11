@@ -9,6 +9,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
+using TheLithium.Imprint.Build;
 
 namespace TheLithium.Imprint.Generator;
 
@@ -206,7 +207,7 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
                 update = ClassUpdate(method.ContainingType);
             }
 
-            var requiresCase = method.Parameters.Any(parameter => parameter.Type.ToDisplayString() != "System.Threading.CancellationToken")
+            var requiresCase = method.Parameters.Any(parameter => !CompilerTypeFacts.IsCancellationToken(parameter.Type))
                 || method.TypeParameters.Length != 0 || method.ContainingType.IsGenericType;
             body.Append("            global::TheLithium.Imprint.Generation.SnapshotMetadata.Register(")
                 .Append(Literal(file)).Append(", ")
@@ -307,7 +308,7 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
         {
             var type = attribute.AttributeClass;
             // Row metadata describes one invocation, not the entire parameterized method.
-            if (type?.Name == "TestCaseAttribute" || type?.Name == "DataRowAttribute" || type?.Name == "InlineDataAttribute")
+            if (IsRowAttribute(type))
             {
                 continue;
             }
@@ -377,6 +378,21 @@ public sealed class SnapshotGenerator : IIncrementalGenerator
             }
         }
         return null;
+    }
+
+    private static bool IsRowAttribute(INamedTypeSymbol? type)
+    {
+        for (var current = type; current != null; current = current.BaseType)
+        {
+            if (current.ToDisplayString() is "Xunit.InlineDataAttribute"
+                or "NUnit.Framework.TestCaseAttribute"
+                or "Microsoft.VisualStudio.TestTools.UnitTesting.DataRowAttribute")
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string Literal(string value) => SymbolDisplay.FormatLiteral(value, quote: true);

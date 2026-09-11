@@ -120,6 +120,14 @@ public sealed class GeneratorTests
     }
 
     [Fact]
+    public void NullableCancellationTokenDoesNotRequireCaseIdentity()
+    {
+        var result = Generate("using TheLithium.Imprint; using System.Threading; public class Tests { public void Test(CancellationToken? token) => Snapshots.Run(() => 1.AssertSnapshot()); }");
+        Assert.Empty(result.Errors);
+        Assert.Contains("SnapshotUpdate)0, false", result.Source);
+    }
+
+    [Fact]
     public void EnumAliasesDoNotGenerateDuplicateCases()
     {
         var result = Generate("using TheLithium.Imprint; public enum State { A=0, B=0, C=1 } public class Tests { public void Test() => Snapshots.Run(() => State.B.AssertSnapshot()); }");
@@ -198,6 +206,25 @@ public sealed class GeneratorTests
             """);
         Assert.Empty(result.Errors);
         Assert.DoesNotContain("Only one row", result.Source);
+        Assert.Contains("\"Tests\", \"Test\"", result.Source);
+    }
+
+    [Fact]
+    public void DerivedRowDisplayNamesDoNotRenameTheWholeMethod()
+    {
+        var result = Generate("""
+            using TheLithium.Imprint;
+            namespace Xunit {
+                public class InlineDataAttribute : System.Attribute { public string DisplayName { get; set; } }
+            }
+            public class CustomRowAttribute : Xunit.InlineDataAttribute { }
+            public class Tests {
+                [CustomRow(DisplayName = "Only one derived row")]
+                public void Test(int value) => Snapshots.Run(() => value.AssertSnapshot());
+            }
+            """);
+        Assert.Empty(result.Errors);
+        Assert.DoesNotContain("Only one derived row", result.Source);
         Assert.Contains("\"Tests\", \"Test\"", result.Source);
     }
 
