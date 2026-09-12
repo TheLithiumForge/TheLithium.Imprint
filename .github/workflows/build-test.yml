@@ -1,4 +1,4 @@
-name: Build and test
+name: Build and test (managed and Native AOT)
 
 on:
   push:
@@ -23,7 +23,7 @@ env:
 
 jobs:
   managed:
-    name: Managed build and tests (${{ matrix.os }})
+    name: Managed (non-Native AOT) build and tests (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -40,13 +40,13 @@ jobs:
           global-json-file: global.json
       - name: Restore
         run: dotnet restore TheLithium.Imprint.slnx --force-evaluate
-      - name: Build
+      - name: Build (managed / non-Native AOT)
         run: dotnet build TheLithium.Imprint.slnx -c Release --no-restore
       - name: Verify formatting
         run: dotnet format TheLithium.Imprint.slnx whitespace --no-restore --verify-no-changes
-      - name: Run managed executable specifications
+      - name: Test managed executable specifications (non-Native AOT)
         run: dotnet run --project tests/TheLithium.Imprint.Specifications -c Release --no-build --no-restore -- --expect-managed
-      - name: Test managed framework projects
+      - name: Test managed framework projects (non-Native AOT)
         run: >-
           dotnet test TheLithium.Imprint.slnx
           -c Release
@@ -61,7 +61,7 @@ jobs:
           path: artifacts/test-results
 
   aot:
-    name: Packaged managed and Native AOT tests (${{ matrix.os }})
+    name: Native AOT validation (with managed package preflight) (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -84,13 +84,13 @@ jobs:
           global-json-file: global.json
       - name: Restore
         run: dotnet restore TheLithium.Imprint.slnx --force-evaluate
-      - name: Build package inputs
+      - name: Build package inputs (managed / non-Native AOT)
         run: dotnet build TheLithium.Imprint.slnx -c Release --no-restore
       - name: Pack local feed
         run: dotnet pack TheLithium.Imprint.slnx -c Release --no-build --no-restore
       - name: Restore package consumers
         run: dotnet restore TheLithium.Imprint.slnx -p:UsePackageReferences=true -p:RestorePackagesPath=artifacts/nuget/package-consumer --force-evaluate
-      - name: Test packaged managed consumers
+      - name: Test packaged consumers (managed / non-Native AOT)
         run: >-
           dotnet test TheLithium.Imprint.slnx
           -c Release
@@ -99,7 +99,7 @@ jobs:
           --no-restore
           --logger trx
           --results-directory artifacts/package-test-results
-      - name: Run packaged managed specifications
+      - name: Test packaged executable specifications (managed / non-Native AOT)
         run: >-
           dotnet run
           --project tests/TheLithium.Imprint.Specifications
@@ -110,7 +110,7 @@ jobs:
           --no-restore
           --
           --expect-managed
-      - name: Publish package consumer as Native AOT
+      - name: Build package consumer (Native AOT)
         run: >-
           dotnet publish tests/TheLithium.Imprint.Specifications
           -c Release
@@ -122,7 +122,7 @@ jobs:
           -p:IlcTreatWarningsAsErrors=true
           -p:ILLinkTreatWarningsAsErrors=true
           -o artifacts/native/${{ matrix.rid }}
-      - name: Run native specifications
+      - name: Test executable specifications (Native AOT)
         run: ./artifacts/native/${{ matrix.rid }}/${{ matrix.executable }} --expect-aot
       - uses: actions/upload-artifact@v4
         if: always()
@@ -134,7 +134,7 @@ jobs:
             artifacts/packages
 
   xunit:
-    name: xUnit
+    name: xUnit (managed / non-Native AOT)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -157,7 +157,7 @@ jobs:
           path: artifacts/test-results/xunit
 
   nunit:
-    name: NUnit
+    name: NUnit (managed / non-Native AOT)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -181,7 +181,7 @@ jobs:
           path: artifacts/test-results/nunit
 
   mstest:
-    name: MSTest
+    name: MSTest (managed / non-Native AOT)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

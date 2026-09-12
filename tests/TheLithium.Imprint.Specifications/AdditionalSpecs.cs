@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using TheLithium.Imprint.Generation;
 
@@ -330,10 +331,14 @@ public static partial class Specs
     {
         // The executable owns this process scenario; the xUnit adapter also runs these same specs.
         using var f = new Fixture();
-        var executable = Environment.ProcessPath!;
-        var isHarness = Path.GetFileNameWithoutExtension(executable).Equals("TheLithium.Imprint.Specifications", StringComparison.Ordinal);
-        var start = new ProcessStartInfo(isHarness ? executable : "dotnet") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        if (!isHarness)
+        var isNativeAot = !RuntimeFeature.IsDynamicCodeSupported;
+        var start = new ProcessStartInfo(isNativeAot ? ResolveNativeExecutable() : "dotnet")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        if (!isNativeAot)
         {
             start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "TheLithium.Imprint.Specifications.dll"));
         }
@@ -366,6 +371,30 @@ public static partial class Specs
                 second.Kill(entireProcessTree: true);
             }
         }
+    }
+
+    private static string ResolveNativeExecutable()
+    {
+        var publishedName = OperatingSystem.IsWindows()
+            ? "TheLithium.Imprint.Specifications.exe"
+            : "TheLithium.Imprint.Specifications";
+        var publishedPath = Path.Combine(AppContext.BaseDirectory, publishedName);
+        if (File.Exists(publishedPath))
+        {
+            return publishedPath;
+        }
+
+        var processPath = Environment.ProcessPath;
+        if (processPath is not null
+            && !Path.GetFileNameWithoutExtension(processPath).Equals("dotnet", StringComparison.OrdinalIgnoreCase)
+            && File.Exists(processPath))
+        {
+            return processPath;
+        }
+
+        throw new FileNotFoundException(
+            $"Could not find the Native AOT specification executable. Checked '{publishedPath}' and '{processPath}'.",
+            publishedPath);
     }
 }
 

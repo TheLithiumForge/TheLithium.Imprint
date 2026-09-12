@@ -30,7 +30,7 @@ env:
 
 jobs:
   validate:
-    name: Cross-platform build and test
+    name: Cross-platform managed and Native AOT validation
     uses: ./.github/workflows/build-test.yml
 
   publish:
