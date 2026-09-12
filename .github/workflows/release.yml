@@ -30,36 +30,8 @@ env:
 
 jobs:
   validate:
-    name: Validate (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
-          - macos-latest
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          global-json-file: global.json
-      - name: Restore
-        run: dotnet restore TheLithium.Imprint.slnx --force-evaluate
-      - name: Build
-        run: dotnet build TheLithium.Imprint.slnx -c Release --no-restore
-      - name: Verify formatting
-        run: dotnet format TheLithium.Imprint.slnx whitespace --no-restore --verify-no-changes
-      - name: Test
-        run: dotnet test TheLithium.Imprint.slnx -c Release --no-build --no-restore --logger trx --results-directory artifacts/test-results
-      - name: Run managed executable specifications
-        run: dotnet run --project tests/TheLithium.Imprint.Specifications -c Release --no-build --no-restore -- --expect-managed
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: release-validation-${{ matrix.os }}
-          path: artifacts/test-results
+    name: Cross-platform build and test
+    uses: ./.github/workflows/build-test.yml
 
   publish:
     name: Pack, verify, and publish

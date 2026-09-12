@@ -84,7 +84,7 @@ On Windows, the native link step shells out to `vswhere.exe`. If it is not on `P
 
 [`release.yml`](../.github/workflows/release.yml) runs only for a `v*.*.*` tag or a deliberate manual dispatch. Normal pushes and pull requests never publish.
 
-It validates the managed matrix, packs the requested version, tests the packages as a consumer, verifies a Linux Native AOT publish, uploads both `.nupkg` files to NuGet.org, and creates a GitHub Release with generated notes and the package assets.
+It reuses `build-test.yml` through `workflow_call`, so publishing is gated on the full managed and packaged Native AOT validation across Windows, Ubuntu, and macOS. It then packs the requested version, tests those exact packages as a consumer, verifies a Linux Native AOT publish, uploads both `.nupkg` files to NuGet.org, and creates a GitHub Release with generated notes and the package assets.
 
 The repository secret `NUGET_API_KEY` must be set. A tag determines the version and prerelease flag automatically; a manual run takes both as inputs.
 
