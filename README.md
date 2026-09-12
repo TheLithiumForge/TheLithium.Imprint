@@ -43,7 +43,7 @@ Works with xUnit, NUnit, MSTest, and anything else that fails a test on an uncau
 ## Install
 
 ```text
-dotnet add package TheLithium.Imprint --version 0.1.0-preview.2
+dotnet add package TheLithium.Imprint --version 1.0.0
 ```
 
 That is the whole setup. No base class, no fixture, no `[UsesVerify]`, no CLI tool.
