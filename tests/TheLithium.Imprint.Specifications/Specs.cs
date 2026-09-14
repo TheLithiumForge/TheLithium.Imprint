@@ -9,7 +9,7 @@ namespace TheLithium.Imprint.Specifications;
 
 public static partial class Specs
 {
-    public static (string Name, Func<Task> Run)[] All => [.. Original, .. Additional];
+    public static (string Name, Func<Task> Run)[] All => [.. Original, .. Additional, .. Security, .. JsonBoundaries, .. Representations, .. Transactions];
 
     private static (string Name, Func<Task> Run)[] Original => new (string, Func<Task>)[]
     {
@@ -262,7 +262,7 @@ public static partial class Specs
     private static void ProjectConfiguration()
     {
         using var f = new Fixture();
-        f.Configure("{\"update\":\"all\",\"files\":{\"textFileExtension\":\"txt\"},\"naming\":{\"useFrameworkDisplayNames\":true}}");
+        f.Configure("{\"update\":\"all\",\"naming\":{\"useFrameworkDisplayNames\":true}}");
         using var project = new EnvironmentValue("IMPRINT_PROJECT_ROOT", f.Root);
         GeneratedFixtures.PreferredDisplayName();
         Check.True(File.Exists(Path.Combine(f.Root, "__snapshots__", "Generated suite", "Readable generated display", "value.json")));
@@ -430,6 +430,7 @@ public static partial class Specs
         {
             "{\"answer\":42}".AssertSnapshot("json", new()
             {
+                StringContent = SnapshotStringContent.Json,
                 Format = SnapshotFormat.Json
             });
             "{\"answer\":42}".AssertSnapshot("text");
@@ -454,6 +455,7 @@ public static partial class Specs
         Check.Throws<SnapshotCaptureException>(() => f.Run(() =>
             "{\"a\":1,\"a\":2}".AssertSnapshot("value", new()
             {
+                StringContent = SnapshotStringContent.Json,
                 Format = SnapshotFormat.Json
             }), SnapshotUpdate.All));
         Check.True(!File.Exists(f.FilePath("value.json")));
@@ -604,6 +606,7 @@ public static partial class Specs
         {
             "{\"v\":1}".AssertSnapshot("value", new()
             {
+                StringContent = SnapshotStringContent.Json,
                 Format = SnapshotFormat.Json,
                 Update = SnapshotUpdate.All
             });
@@ -616,7 +619,7 @@ public static partial class Specs
     {
         using var f = new Fixture();
         f.Run(() => "one".AssertSnapshot("value"), SnapshotUpdate.All);
-        File.WriteAllText(f.FilePath("value.snap"), "one");
+        File.WriteAllText(f.FilePath("value.json"), "one");
         Check.Throws<SnapshotConflictException>(() => f.Run(() => "two".AssertSnapshot("value"), SnapshotUpdate.All));
     }
 
@@ -688,7 +691,7 @@ public static partial class Specs
 
     private sealed class LengthComparer : ISnapshotComparer
     {
-        public SnapshotComparisonResult Compare(string expected, string received, SnapshotFormat format, SnapshotComparison options)
+        public SnapshotComparisonResult Compare(string expected, string received, SnapshotFormat format, ResolvedSnapshotComparison options)
             => new(expected.Length == received.Length, "Text lengths differ.");
     }
     private static void CustomComparer()

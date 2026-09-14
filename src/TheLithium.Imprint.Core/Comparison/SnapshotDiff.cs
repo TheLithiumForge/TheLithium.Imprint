@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace TheLithium.Imprint.Comparison;
@@ -9,6 +10,8 @@ internal static class SnapshotDiff
     private const int MaxOutputLines = 80;
     private const int MaxLineLength = 240;
     private const long MaxCells = 1_000_000;
+    private const int MaxChangedLines = 10_000;
+    private const int AbbreviatedLinesPerSide = 15;
     private readonly record struct Line(char Kind, string Text);
 
     internal static string Create(string expected, string received)
@@ -28,8 +31,8 @@ internal static class SnapshotDiff
             suffix++;
         }
 
-        var a = left.Length - prefix - suffix;
-        var b = right.Length - prefix - suffix;
+        var expectedChangeCount = left.Length - prefix - suffix;
+        var receivedChangeCount = right.Length - prefix - suffix;
         var lines = new List<Line>();
         var start = Math.Max(0, prefix - Context);
         for (var i = start; i < prefix; i++)
@@ -37,48 +40,49 @@ internal static class SnapshotDiff
             lines.Add(new(' ', left[i]));
         }
 
-        var abbreviated = (long)(a + 1) * (b + 1) > MaxCells || a + b > 10_000;
+        var abbreviated = (long)(expectedChangeCount + 1) * (receivedChangeCount + 1) > MaxCells || expectedChangeCount + receivedChangeCount > MaxChangedLines;
         if (abbreviated)
         {
             // Never allocate a quadratic matrix for a large changed region.
-            for (var i = 0; i < Math.Min(a, 15); i++)
+            for (var i = 0; i < Math.Min(expectedChangeCount, AbbreviatedLinesPerSide); i++)
             {
                 lines.Add(new('-', left[prefix + i]));
             }
 
-            for (var i = 0; i < Math.Min(b, 15); i++)
+            for (var i = 0; i < Math.Min(receivedChangeCount, AbbreviatedLinesPerSide); i++)
             {
                 lines.Add(new('+', right[prefix + i]));
             }
         }
         else
         {
-            var lengths = new int[a + 1, b + 1];
-            for (var i = a - 1; i >= 0; i--)
+            var lengths = new int[expectedChangeCount + 1, receivedChangeCount + 1];
+            for (var i = expectedChangeCount - 1; i >= 0; i--)
             {
-                for (var j = b - 1; j >= 0; j--)
+                for (var j = receivedChangeCount - 1; j >= 0; j--)
                 {
                     lengths[i, j] = left[prefix + i] == right[prefix + j]
                         ? lengths[i + 1, j + 1] + 1 : Math.Max(lengths[i + 1, j], lengths[i, j + 1]);
                 }
             }
 
-            var x = 0;
-            var y = 0;
-            while (x < a || y < b)
+            var expectedIndex = 0;
+            var receivedIndex = 0;
+            while (expectedIndex < expectedChangeCount || receivedIndex < receivedChangeCount)
             {
-                if (x < a && y < b && left[prefix + x] == right[prefix + y])
+                if (expectedIndex < expectedChangeCount && receivedIndex < receivedChangeCount && left[prefix + expectedIndex] == right[prefix + receivedIndex])
                 {
-                    lines.Add(new(' ', left[prefix + x++]));
-                    y++;
+                    lines.Add(new(' ', left[prefix + expectedIndex++]));
+                    receivedIndex++;
                 }
-                else if (x < a && (y == b || lengths[x + 1, y] >= lengths[x, y + 1]))
+                else if (expectedIndex < expectedChangeCount
+                    && (receivedIndex == receivedChangeCount || lengths[expectedIndex + 1, receivedIndex] >= lengths[expectedIndex, receivedIndex + 1]))
                 {
-                    lines.Add(new('-', left[prefix + x++]));
+                    lines.Add(new('-', left[prefix + expectedIndex++]));
                 }
                 else
                 {
-                    lines.Add(new('+', right[prefix + y++]));
+                    lines.Add(new('+', right[prefix + receivedIndex++]));
                 }
             }
         }
@@ -91,12 +95,12 @@ internal static class SnapshotDiff
         var oldLine = start + 1;
         var newLine = start + 1;
         var emitted = 0;
-        var at = 0;
-        while (at < lines.Count)
+        var lineIndex = 0;
+        while (lineIndex < lines.Count)
         {
-            var first = at;
-            var lastChange = at;
-            var end = at;
+            var first = lineIndex;
+            var lastChange = lineIndex;
+            var end = lineIndex;
             for (; end < lines.Count; end++)
             {
                 if (lines[end].Kind != ' ')
@@ -128,18 +132,18 @@ internal static class SnapshotDiff
                     newCount++;
                 }
             }
-            output.Append("@@ -").Append(oldLine).Append(',').Append(oldCount)
-                .Append(" +").Append(newLine).Append(',').Append(newCount).Append(" @@\n");
-            for (; at < end; at++)
+            output.Append(CultureInfo.InvariantCulture, $"@@ -{oldLine},{oldCount} +{newLine},{newCount} @@\n");
+            for (; lineIndex < end; lineIndex++)
             {
                 if (emitted++ == MaxOutputLines)
                 {
                     return output.Append("... diff truncated; inspect the full expected and received artifacts.").ToString();
                 }
 
-                var line = lines[at];
-                var text = line.Text.Length > MaxLineLength ? line.Text[..MaxLineLength] + "..." : line.Text;
-                output.Append(line.Kind).Append(' ').Append(text.Replace("\r", "\\r").Replace("\t", "\\t")).Append('\n');
+                var line = lines[lineIndex];
+                var text = line.Text.Length > MaxLineLength ? $"{line.Text[..MaxLineLength]}..." : line.Text;
+                var escapedText = text.Replace("\r", "\\r").Replace("\t", "\\t");
+                output.Append($"{line.Kind} {escapedText}\n");
                 if (line.Kind != '+')
                 {
                     oldLine++;
@@ -150,16 +154,16 @@ internal static class SnapshotDiff
                     newLine++;
                 }
             }
-            var nextChange = at;
+            var nextChange = lineIndex;
             while (nextChange < lines.Count && lines[nextChange].Kind == ' ')
             {
                 nextChange++;
             }
 
-            var nextStart = Math.Max(at, nextChange - Context);
-            oldLine += nextStart - at;
-            newLine += nextStart - at;
-            at = nextStart;
+            var nextStart = Math.Max(lineIndex, nextChange - Context);
+            oldLine += nextStart - lineIndex;
+            newLine += nextStart - lineIndex;
+            lineIndex = nextStart;
         }
         if (abbreviated)
         {

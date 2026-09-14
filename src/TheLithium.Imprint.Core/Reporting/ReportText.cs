@@ -11,13 +11,17 @@ internal static class ReportText
             lines.Add($"{entry.FileName}: {SnapshotStatusText.Format(entry.Status)}");
             if (entry.Difference is not null)
             {
-                lines.Add("  " + entry.Difference.Replace("\n", "\n  "));
+                lines.Add($"  {entry.Difference.Replace("\n", "\n  ")}");
             }
         }
         if (report.ArtifactDirectory is not null)
         {
             lines.Add("");
-            lines.Add("Received files: " + report.ArtifactDirectory);
+            lines.Add($"Received files: {report.ArtifactDirectory}");
+        }
+        if (report.ArtifactError is not null)
+        {
+            lines.Add($"Failure artifacts could not be written: {report.ArtifactError}");
         }
         lines.Add("");
         lines.Add("Review the differences, then authorize updates with a method/class attribute,");

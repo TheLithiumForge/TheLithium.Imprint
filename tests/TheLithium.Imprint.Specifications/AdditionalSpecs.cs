@@ -105,7 +105,7 @@ public static partial class Specs
         var right = left.ToArray();
         right[2] = "first change";
         right[35] = "second change";
-        var diff = DefaultSnapshotComparer.Instance.Compare(string.Join('\n', left), string.Join('\n', right), SnapshotFormat.Snap, new()).Difference!;
+        var diff = DefaultSnapshotComparer.Instance.Compare(string.Join('\n', left), string.Join('\n', right), SnapshotFormat.Text, new()).Difference!;
         Check.True(diff.Contains("+ first change", StringComparison.Ordinal));
         Check.True(diff.Contains("+ second change", StringComparison.Ordinal));
         Check.True(!diff.Contains("line 20", StringComparison.Ordinal));
@@ -116,7 +116,7 @@ public static partial class Specs
     {
         var left = string.Join('\n', Enumerable.Range(0, 10_000).Select(i => "old " + i));
         var right = string.Join('\n', Enumerable.Range(0, 10_000).Select(i => "new " + i));
-        var diff = DefaultSnapshotComparer.Instance.Compare(left, right, SnapshotFormat.Snap, new()).Difference!;
+        var diff = DefaultSnapshotComparer.Instance.Compare(left, right, SnapshotFormat.Text, new()).Difference!;
         Check.True(diff.Length < 20_000);
         Check.True(diff.Contains("abbreviated", StringComparison.Ordinal));
         Check.True(diff.Contains("- old 0", StringComparison.Ordinal) && diff.Contains("+ new 0", StringComparison.Ordinal));
@@ -415,6 +415,6 @@ internal sealed class DerivedModel : BaseModel
 }
 internal sealed class BrokenComparer : ISnapshotComparer
 {
-    public SnapshotComparisonResult Compare(string expected, string received, SnapshotFormat format, SnapshotComparison options)
+    public SnapshotComparisonResult Compare(string expected, string received, SnapshotFormat format, ResolvedSnapshotComparison options)
         => throw new InvalidOperationException("comparison failed");
 }

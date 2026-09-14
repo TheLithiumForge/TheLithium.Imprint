@@ -4,221 +4,93 @@ namespace TheLithium.Imprint.Configuration;
 
 internal static class ProjectConfigurationReader
 {
-    internal static ProjectConfiguration Read(string path, bool required)
+    internal static ProjectConfiguration Read(string path, bool required, CancellationToken cancellation = default)
     {
         if (!File.Exists(path))
         {
             if (required)
             {
-                throw new SnapshotConfigurationException("Configuration file not found: " + path);
+                throw new SnapshotConfigurationException($"Configuration file not found: {path}");
             }
-
             return new();
         }
         try
         {
-            if (new FileInfo(path).Length > 1024 * 1024)
+            var text = SnapshotFileReader.ReadText(path, SnapshotLimits.ConfigurationBytes, cancellation);
+            if (text.StartsWith('\uFEFF'))
             {
-                throw new SnapshotConfigurationException("Configuration file exceeds 1 MiB.");
+                text = text[1..];
             }
-
-            using var document = JsonDocument.Parse(File.ReadAllText(path, SnapshotEncoding.Utf8),
-                new JsonDocumentOptions { MaxDepth = 16 });
-            var config = new ProjectConfiguration();
-            foreach (var property in UniqueProperties(document.RootElement))
-            {
-                var value = property.Value;
-                config = property.Name switch
-                {
-                    "version" when value.GetInt32() == 1 => config,
-                    "$schema" when value.ValueKind == JsonValueKind.String => config,
-                    "update" => config with { Update = Settings.ParseUpdate(RequiredString(value, property.Name)) },
-                    "allowEmptyTests" => config with { AllowEmpty = value.GetBoolean() },
-                    "files" => ReadFiles(config, Group(value, property.Name)),
-                    "naming" => ReadNaming(config, Group(value, property.Name)),
-                    "comparison" => config with { Comparison = ReadComparison(Group(value, property.Name)) },
-                    "limits" => ReadLimits(config, Group(value, property.Name)),
-                    _ => throw new SnapshotConfigurationException(Unknown(property.Name))
-                };
-            }
-            if (PortableNames.Segment(config.SnapshotFolderName) != config.SnapshotFolderName)
-            {
-                throw new SnapshotConfigurationException(
-                    "files.snapshotFolderName must be a portable single folder name. Use files.snapshotRootPath for a path.");
-            }
-
-            if (config.ArtifactDirectory is not null && string.IsNullOrWhiteSpace(config.ArtifactDirectory))
+            using var document = StrictJson.Parse(text, SnapshotLimits.ConfigurationDepth, cancellation);
+            // Absence uses the build-provided artifact directory; explicit null is a configuration error.
+            if (document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("files", out var files) && files.ValueKind == JsonValueKind.Object
+                && files.TryGetProperty("failureArtifactPath", out var artifact) && artifact.ValueKind == JsonValueKind.Null)
             {
                 throw new SnapshotConfigurationException("files.failureArtifactPath must be a nonempty string.");
             }
-
-            if (config.LockTimeoutSeconds is < 1 or > 300)
-            {
-                throw new SnapshotConfigurationException("limits.lockTimeoutSeconds must be 1..300.");
-            }
-
-            Settings.ValidateComparison(config.Comparison);
-            return config;
+            var file = document.RootElement.Deserialize(ProjectConfigurationJsonContext.Instance.ProjectConfigurationFile)
+                ?? throw new SnapshotConfigurationException("Project configuration must be an object.");
+            return Resolve(file);
         }
         catch (SnapshotConfigurationException) { throw; }
-        catch (Exception error) when (error is JsonException or InvalidOperationException or FormatException or ArgumentException)
+        catch (Exception error) when (error is JsonException or InvalidOperationException or FormatException or ArgumentException or SnapshotException)
         {
-            throw new SnapshotConfigurationException("Invalid configuration in " + path + ": " + error.Message);
+            throw new SnapshotConfigurationException($"Invalid configuration in {path}: {error.Message}");
         }
     }
 
-    private static ProjectConfiguration ReadFiles(ProjectConfiguration config, JsonElement element)
+    private static ProjectConfiguration Resolve(ProjectConfigurationFile file)
     {
-        foreach (var property in UniqueProperties(element))
+        if (file.Version != 1 || file.Update == SnapshotUpdate.Inherit)
         {
-            var value = property.Value;
-            config = property.Name switch
-            {
-                "snapshotFolderName" => config with { SnapshotFolderName = RequiredString(value, "files.snapshotFolderName") },
-                "snapshotRootPath" => config with { RootDirectory = value.GetString() },
-                "failureArtifactPath" => config with { ArtifactDirectory = RequiredString(value, "files.failureArtifactPath") },
-                "textFileExtension" => config with
-                {
-                    TextFormat = value.GetString() switch
-                    {
-                        "snap" => SnapshotFormat.Snap,
-                        "txt" => SnapshotFormat.Text,
-                        _ => throw new SnapshotConfigurationException("files.textFileExtension must be \"snap\" or \"txt\".")
-                    }
-                },
-                _ => throw new SnapshotConfigurationException(Unknown("files." + property.Name))
-            };
+            throw new SnapshotConfigurationException("Configuration requires version 1 and update verify, missing or all.");
         }
-
-        return config;
-    }
-
-    private static ProjectConfiguration ReadNaming(ProjectConfiguration config, JsonElement element)
-    {
-        foreach (var property in UniqueProperties(element))
+        if (PortableNames.Segment(file.Files.SnapshotFolderName) != file.Files.SnapshotFolderName)
         {
-            var value = property.Value;
-            config = property.Name switch
-            {
-                "unnamedCaptures" => config with
-                {
-                    Naming = value.GetString() switch
-                    {
-                        "name-then-order" => SnapshotNaming.NameThenOrder,
-                        "order" => SnapshotNaming.Order,
-                        "explicit-only" => SnapshotNaming.ExplicitOnly,
-                        _ => throw new SnapshotConfigurationException(
-                            "naming.unnamedCaptures must be \"name-then-order\", \"order\", or \"explicit-only\".")
-                    }
-                },
-                "useFrameworkDisplayNames" => config with { UseFrameworkDisplayNames = value.GetBoolean() },
-                _ => throw new SnapshotConfigurationException(Unknown("naming." + property.Name))
-            };
+            throw new SnapshotConfigurationException("files.snapshotFolderName must be a portable single folder name.");
         }
-
-        return config;
-    }
-
-    private static ProjectConfiguration ReadLimits(ProjectConfiguration config, JsonElement element)
-    {
-        foreach (var property in UniqueProperties(element))
+        if (file.Files.FailureArtifactPath is { } artifactPath && string.IsNullOrWhiteSpace(artifactPath)
+            || file.Files.SnapshotRootPath is { } root && string.IsNullOrWhiteSpace(root))
         {
-            var value = property.Value;
-            config = property.Name switch
-            {
-                "maxNestingDepth" => config with { MaxNestingDepth = value.GetInt32() },
-                "maxValuesPerSnapshot" => config with { MaxValuesPerSnapshot = value.GetInt32() },
-                "maxBytesPerSnapshot" => config with { MaxBytesPerSnapshot = value.GetInt32() },
-                "lockTimeoutSeconds" => config with { LockTimeoutSeconds = value.GetInt32() },
-                _ => throw new SnapshotConfigurationException(Unknown("limits." + property.Name))
-            };
+            throw new SnapshotConfigurationException("Configured file paths must be nonempty strings.");
         }
-
-        return config;
-    }
-
-    private static SnapshotComparison ReadComparison(JsonElement element)
-    {
-        var options = new SnapshotComparison();
-        foreach (var property in UniqueProperties(element))
+        if (file.Limits.LockTimeoutSeconds is < 1 or > 300)
         {
-            options = property.Name switch
-            {
-                "numericTolerance" => options with { NumericTolerance = property.Value.GetDecimal() },
-                "ignoreArrayOrder" => options with { IgnoreArrayOrder = property.Value.GetBoolean() },
-                "ignoreStringCase" => options with { IgnoreStringCase = property.Value.GetBoolean() },
-                "ignoreLineEndings" => options with { IgnoreLineEndings = property.Value.GetBoolean() },
-                "ignoreTrailingWhitespace" => options with { IgnoreTrailingWhitespace = property.Value.GetBoolean() },
-                "maxUnorderedArrayLength" => options with { MaxUnorderedArrayLength = property.Value.GetInt32() },
-                _ => throw new SnapshotConfigurationException(Unknown("comparison." + property.Name))
-            };
+            throw new SnapshotConfigurationException("limits.lockTimeoutSeconds must be 1..300.");
         }
-
-        return options;
-    }
-
-    /// <summary>Names a group whose value must be an object, so a stale flat value reports the new location.</summary>
-    private static JsonElement Group(JsonElement value, string name)
-        => value.ValueKind == JsonValueKind.Object
-            ? value
-            : throw new SnapshotConfigurationException("\"" + name + "\" must be an object, for example "
-                + name + ": { " + Example(name) + " }.");
-
-    private static string Example(string group) => group switch
-    {
-        "files" => "\"snapshotFolderName\": \"__snapshots__\"",
-        "naming" => "\"unnamedCaptures\": \"name-then-order\"",
-        "limits" => "\"maxNestingDepth\": 64",
-        _ => "\"ignoreLineEndings\": true"
-    };
-
-    /// <summary>Sends a property that was renamed or grouped to its new spelling instead of only rejecting it.</summary>
-    /// <param name="name">The property as written, qualified with its group when it was inside one.</param>
-    private static string Unknown(string name)
-    {
-        // Match on the leaf so an old spelling is recognised whether or not it was written in a group.
-        var leaf = name[(name.LastIndexOf('.') + 1)..];
-        var moved = leaf switch
+        Settings.ValidateLimits(file.Limits.MaxNestingDepth, file.Limits.MaxValuesPerSnapshot, file.Limits.MaxBytesPerSnapshot);
+        var comparison = new SnapshotComparison
         {
-            "directoryName" => "files.snapshotFolderName",
-            "rootDirectory" => "files.snapshotRootPath",
-            "artifactDirectory" => "files.failureArtifactPath",
-            "textExtension" => "files.textFileExtension",
-            "preferDisplayNames" => "naming.useFrameworkDisplayNames",
-            "maxDepth" => "limits.maxNestingDepth",
-            "maxNodes" => "limits.maxValuesPerSnapshot",
-            "maxBytes" => "limits.maxBytesPerSnapshot",
-            "allowEmpty" => "allowEmptyTests",
-            _ => null
+            NumericTolerance = file.Comparison.NumericTolerance,
+            IgnoreArrayOrder = file.Comparison.IgnoreArrayOrder,
+            IgnoreStringCase = file.Comparison.IgnoreStringCase,
+            IgnoreLineEndings = file.Comparison.IgnoreLineEndings,
+            IgnoreTrailingWhitespace = file.Comparison.IgnoreTrailingWhitespace,
+            MaxUnorderedArrayLength = file.Comparison.MaxUnorderedArrayLength
         };
-
-        return moved is null
-            ? "Unknown or invalid configuration property: " + name
-            : "Unknown configuration property: " + name + ". It is now \"" + moved + "\".";
-    }
-
-    private static string RequiredString(JsonElement value, string property)
-    {
-        var text = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-        if (string.IsNullOrWhiteSpace(text))
+        Settings.ValidateComparison(comparison);
+        return new()
         {
-            throw new SnapshotConfigurationException(property + " must be a nonempty string.");
-        }
-
-        return text;
-    }
-
-    private static IEnumerable<JsonProperty> UniqueProperties(JsonElement element)
-    {
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var property in element.EnumerateObject())
-        {
-            if (!seen.Add(property.Name))
+            Update = file.Update,
+            AllowEmpty = file.AllowEmptyTests,
+            StringContent = file.StringContent,
+            SnapshotFolderName = file.Files.SnapshotFolderName,
+            RootDirectory = file.Files.SnapshotRootPath,
+            ArtifactDirectory = file.Files.FailureArtifactPath,
+            Naming = file.Naming.UnnamedCaptures,
+            UseFrameworkDisplayNames = file.Naming.UseFrameworkDisplayNames,
+            Comparison = comparison,
+            Representation = new()
             {
-                throw new SnapshotConfigurationException("Duplicate configuration property: " + property.Name);
-            }
-
-            yield return property;
-        }
+                Enums = file.Representation.Enums,
+                ByteArrays = file.Representation.ByteArrays,
+                Dictionaries = file.Representation.Dictionaries
+            },
+            MaxNestingDepth = file.Limits.MaxNestingDepth,
+            MaxValuesPerSnapshot = file.Limits.MaxValuesPerSnapshot,
+            MaxBytesPerSnapshot = file.Limits.MaxBytesPerSnapshot,
+            LockTimeoutSeconds = file.Limits.LockTimeoutSeconds
+        };
     }
 }

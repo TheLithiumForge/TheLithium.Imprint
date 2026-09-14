@@ -45,7 +45,17 @@ public sealed record SnapshotTestOptions
     {
         get; init;
     }
-    /// <summary>Replaces the project comparison rules as a whole.</summary>
+    /// <summary>Interpret root strings as values or already serialized JSON documents.</summary>
+    public SnapshotStringContent? StringContent
+    {
+        get; init;
+    }
+    /// <summary>Overrides project representation preferences for this test.</summary>
+    public SnapshotRepresentationOptions? Representation
+    {
+        get; init;
+    }
+    /// <summary>Overrides individual project comparison fields.</summary>
     public SnapshotComparison? Comparison
     {
         get; init;
@@ -75,7 +85,7 @@ public sealed record SnapshotTestOptions
     {
         get; init;
     }
-    /// <summary>Cancels capture, comparison, and lock waiting. An already-started storage transaction completes or rolls back.</summary>
+    /// <summary>Cancels Imprint-owned capture, comparison, and lock waiting. Custom callbacks are not interrupted or passed the token. An already-started storage transaction completes or rolls back.</summary>
     public CancellationToken CancellationToken
     {
         get; init;

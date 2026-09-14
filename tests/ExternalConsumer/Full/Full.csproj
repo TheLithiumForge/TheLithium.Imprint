@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TheLithium.Imprint" Version="1.0.0" />
+    <!-- Only the test dispatcher/explicit integration harness opts out. OrdinaryTests.cs uses normal package defaults. -->
+    <Compile Update="Program.cs;Scenarios.cs;ConsumerCase.cs" ImprintInstrument="false" />
+  </ItemGroup>
+</Project>

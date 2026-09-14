@@ -1,14 +1,19 @@
 {
-  "$schema": "../snapshots.schema.json",
+  "$schema": "../schemas/1.0.0/snapshots.schema.json",
   "version": 1,
 
   "update": "missing",
   "allowEmptyTests": false,
+  "stringContent": "value",
+  "representation": {
+    "enums": "name-or-number",
+    "byteArrays": "numbers",
+    "dictionaries": "automatic"
+  },
 
   "files": {
     "snapshotFolderName": "__snapshots__",
-    "failureArtifactPath": "artifacts/imprint/failures",
-    "textFileExtension": "txt"
+    "failureArtifactPath": "artifacts/imprint/failures"
   },
 
   "naming": {

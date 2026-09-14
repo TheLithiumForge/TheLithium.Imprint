@@ -5,6 +5,8 @@ namespace TheLithium.Imprint.Configuration;
 
 internal static class PortableNames
 {
+    private const int MaximumSegmentLength = 96;
+    private const int HashSuffixLength = 16;
     private static readonly HashSet<string> Devices = new(StringComparer.OrdinalIgnoreCase)
     { "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
       "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", "CONIN$", "CONOUT$" };
@@ -33,19 +35,21 @@ internal static class PortableNames
             safe = "snapshot";
         }
 
-        if (Devices.Contains(safe.Split('.')[0]))
+        var dot = safe.IndexOf('.');
+        var deviceName = dot < 0 ? safe : safe[..dot];
+        if (Devices.Contains(deviceName))
         {
-            safe = "_" + safe;
+            safe = $"_{safe}";
         }
 
-        if (safe.Length > 96)
+        if (safe.Length > MaximumSegmentLength)
         {
-            var length = char.IsHighSurrogate(safe[95]) ? 95 : 96;
+            var length = char.IsHighSurrogate(safe[MaximumSegmentLength - 1]) ? MaximumSegmentLength - 1 : MaximumSegmentLength;
             safe = safe[..length];
         }
         if (!string.Equals(safe, original, StringComparison.Ordinal))
         {
-            safe += "~" + Hash(original)[..16];
+            safe = $"{safe}~{Hash(original)[..HashSuffixLength]}";
         }
 
         return safe;

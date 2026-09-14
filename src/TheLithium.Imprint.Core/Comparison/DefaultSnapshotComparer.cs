@@ -7,6 +7,13 @@ namespace TheLithium.Imprint.Comparison;
 /// <summary>Structural JSON and text equality. No filtering, mutation or fuzzy approval.</summary>
 public sealed class DefaultSnapshotComparer : ISnapshotComparer
 {
+    private const int MaximumExponentMagnitude = 1_000_000;
+    private const int MaximumJsonDisplayBytes = 1024 * 1024;
+    private const int MaximumFallbackCharacters = 16_000;
+    private const int MaximumComparisonWork = 2_000_000;
+    private const int MaximumToleranceDigits = 4096;
+    private const int MaximumToleranceScale = 20_000;
+    private const int MaximumExcerptCharacters = 160;
     /// <summary>Shared stateless comparer used when no custom comparer is supplied.</summary>
     public static DefaultSnapshotComparer Instance { get; } = new();
 
@@ -17,55 +24,88 @@ public sealed class DefaultSnapshotComparer : ISnapshotComparer
     /// <param name="options">Comparison rules for this entry.</param>
     /// <returns>A match or a bounded human-readable difference.</returns>
     public SnapshotComparisonResult Compare(string expected, string received,
-        SnapshotFormat format, SnapshotComparison options)
+        SnapshotFormat format, ResolvedSnapshotComparison options)
     {
+        ArgumentNullException.ThrowIfNull(options);
+        Settings.ValidateComparison(options.ToOptions());
+        return Compare(expected, received, format, options, CancellationToken.None);
+    }
+
+    internal SnapshotComparisonResult Compare(string expected, string received,
+        SnapshotFormat format, ResolvedSnapshotComparison options, CancellationToken cancellation)
+    {
+        cancellation.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(expected);
         ArgumentNullException.ThrowIfNull(received);
         ArgumentNullException.ThrowIfNull(options);
-        Settings.ValidateComparison(options);
-        if (format is SnapshotFormat.Snap or SnapshotFormat.Text)
+
+        if (format == SnapshotFormat.Text)
         {
             var left = ComparableText(expected, options);
             var right = ComparableText(received, options);
+            cancellation.ThrowIfCancellationRequested();
             if (string.Equals(left, right, options.IgnoreStringCase
                     ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
             {
                 return SnapshotComparisonResult.Match;
             }
 
-            var a = left.Split('\n');
-            var b = right.Split('\n');
-            var count = Math.Min(a.Length, b.Length);
+            var expectedLines = left.Split('\n');
+            var receivedLines = right.Split('\n');
+            var count = Math.Min(expectedLines.Length, receivedLines.Length);
             for (var i = 0; i < count; i++)
             {
-                if (!string.Equals(a[i], b[i], options.IgnoreStringCase
+                cancellation.ThrowIfCancellationRequested();
+                if (!string.Equals(expectedLines[i], receivedLines[i], options.IgnoreStringCase
                     ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
                 {
-                    return new(false, $"Line {i + 1}: expected {Excerpt(a[i])}, received {Excerpt(b[i])}.\n" + SnapshotDiff.Create(left, right));
+                    return new(false, $"Line {i + 1}: expected {Excerpt(expectedLines[i])}, received {Excerpt(receivedLines[i])}.\n{SnapshotDiff.Create(left, right)}");
                 }
             }
 
-            return new(false, $"Line count differs: expected {a.Length}, received {b.Length}.\n" + SnapshotDiff.Create(left, right));
+            return new(false, $"Line count differs: expected {expectedLines.Length}, received {receivedLines.Length}.\n{SnapshotDiff.Create(left, right)}");
         }
         if (format != SnapshotFormat.Json)
         {
             throw new SnapshotConfigurationException("The comparer requires a resolved format.");
         }
 
-        using var expectedDocument = JsonDocument.Parse(expected, new JsonDocumentOptions { MaxDepth = 256 });
-        using var receivedDocument = JsonDocument.Parse(received, new JsonDocumentOptions { MaxDepth = 256 });
-        ValidateJson(expectedDocument.RootElement);
-        ValidateJson(receivedDocument.RootElement);
-        var budget = new Budget();
+        using var expectedDocument = StrictJson.Parse(expected, SnapshotLimits.MaximumDepth, cancellation);
+        using var receivedDocument = StrictJson.Parse(received, SnapshotLimits.MaximumDepth, cancellation);
+        var budget = new Budget(cancellation);
         var difference = CompareJson(expectedDocument.RootElement, receivedDocument.RootElement, "$", options, budget);
-        return difference is null ? SnapshotComparisonResult.Match : new(false, difference + "\n" + SnapshotDiff.Create(expected, received));
+        if (difference is null)
+        {
+            return SnapshotComparisonResult.Match;
+        }
+        var expectedDisplay = JsonDisplay(expectedDocument.RootElement, expected, cancellation);
+        var receivedDisplay = JsonDisplay(receivedDocument.RootElement, received, cancellation);
+        return new(false, $"{difference}\n{SnapshotDiff.Create(expectedDisplay, receivedDisplay)}");
     }
 
-    private sealed class Budget
+    private static string JsonDisplay(JsonElement document, string original, CancellationToken cancellation)
     {
-        private int _remaining = 2_000_000;
+        try
+        {
+            return SnapshotEncoding.FormatDocument(document, MaximumJsonDisplayBytes, cancellation);
+        }
+        catch (SnapshotCaptureException)
+        {
+            var length = Math.Min(original.Length, MaximumFallbackCharacters);
+            if (length > 0 && char.IsHighSurrogate(original[length - 1]))
+            {
+                length--;
+            }
+            return $"{original[..length]}\n[JSON display truncated; inspect the expected and received artifact files.]";
+        }
+    }
+
+    private sealed class Budget(CancellationToken cancellation)
+    {
+        private int _remaining = MaximumComparisonWork;
         internal void Consume()
         {
+            cancellation.ThrowIfCancellationRequested();
             if (--_remaining < 0)
             {
                 throw new SnapshotException("Comparison work limit exceeded. Compare smaller values or use an explicit comparer.");
@@ -74,38 +114,39 @@ public sealed class DefaultSnapshotComparer : ISnapshotComparer
     }
 
     private static string? CompareJson(JsonElement left, JsonElement right, string path,
-        SnapshotComparison options, Budget budget)
+        ResolvedSnapshotComparison options, Budget budget)
     {
         budget.Consume();
         if (left.ValueKind != right.ValueKind)
         {
-            return path + ": value kinds differ.";
+            return $"{path}: value kinds differ.";
         }
 
         switch (left.ValueKind)
         {
             case JsonValueKind.Object:
-                var a = left.EnumerateObject().ToDictionary(x => x.Name, x => x.Value, StringComparer.Ordinal);
-                var b = right.EnumerateObject().ToDictionary(x => x.Name, x => x.Value, StringComparer.Ordinal);
-                foreach (var name in a.Keys.Order(StringComparer.Ordinal))
+                var expectedProperties = left.EnumerateObject().ToDictionary(x => x.Name, x => x.Value, StringComparer.Ordinal);
+                var receivedProperties = right.EnumerateObject().ToDictionary(x => x.Name, x => x.Value, StringComparer.Ordinal);
+                foreach (var name in expectedProperties.Keys.Order(StringComparer.Ordinal))
                 {
-                    var child = path + "[\"" + name.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"]";
-                    if (!b.TryGetValue(name, out var other))
+                    var escapedName = name.Replace("\\", "\\\\").Replace("\"", "\\\"");
+                    var child = $"{path}[\"{escapedName}\"]";
+                    if (!receivedProperties.TryGetValue(name, out var other))
                     {
-                        return child + ": property is missing.";
+                        return $"{child}: property is missing.";
                     }
 
-                    var difference = CompareJson(a[name], other, child, options, budget);
+                    var difference = CompareJson(expectedProperties[name], other, child, options, budget);
                     if (difference is not null)
                     {
                         return difference;
                     }
                 }
-                foreach (var name in b.Keys.Order(StringComparer.Ordinal))
+                foreach (var name in receivedProperties.Keys.Order(StringComparer.Ordinal))
                 {
-                    if (!a.ContainsKey(name))
+                    if (!expectedProperties.ContainsKey(name))
                     {
-                        return path + ": unexpected property " + Excerpt(name) + ".";
+                        return $"{path}: unexpected property {Excerpt(name)}.";
                     }
                 }
 
@@ -113,7 +154,7 @@ public sealed class DefaultSnapshotComparer : ISnapshotComparer
             case JsonValueKind.Array:
                 if (left.GetArrayLength() != right.GetArrayLength())
                 {
-                    return path + $": array length differs ({left.GetArrayLength()} vs {right.GetArrayLength()}).";
+                    return $"{path}: array length differs ({left.GetArrayLength()} vs {right.GetArrayLength()}).";
                 }
 
                 var length = left.GetArrayLength();
@@ -121,7 +162,7 @@ public sealed class DefaultSnapshotComparer : ISnapshotComparer
                 {
                     if (length > options.MaxUnorderedArrayLength)
                     {
-                        throw new SnapshotException("Unordered array exceeds its comparison limit at " + path + ".");
+                        throw new SnapshotException($"Unordered array exceeds its comparison limit at {path}.");
                     }
                     // Maximum bipartite matching, not greedy matching. Tolerance is not transitive.
                     var edges = new bool[length, length];
@@ -138,7 +179,7 @@ public sealed class DefaultSnapshotComparer : ISnapshotComparer
                     {
                         if (!Augment(i, edges, assigned, new bool[length], budget))
                         {
-                            return path + ": arrays differ when treated as multisets.";
+                            return $"{path}: arrays differ when treated as multisets.";
                         }
                     }
 
@@ -146,7 +187,7 @@ public sealed class DefaultSnapshotComparer : ISnapshotComparer
                 }
                 for (var i = 0; i < length; i++)
                 {
-                    var difference = CompareJson(left[i], right[i], path + "[" + i + "]", options, budget);
+                    var difference = CompareJson(left[i], right[i], $"{path}[{i}]", options, budget);
                     if (difference is not null)
                     {
                         return difference;
@@ -158,10 +199,10 @@ public sealed class DefaultSnapshotComparer : ISnapshotComparer
                 var rightText = right.GetString() ?? string.Empty;
                 return string.Equals(leftText, rightText, options.IgnoreStringCase
                     ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
-                    ? null : path + ": expected " + Excerpt(leftText) + ", received " + Excerpt(rightText) + ".";
+                    ? null : $"{path}: expected {Excerpt(leftText)}, received {Excerpt(rightText)}.";
             case JsonValueKind.Number:
-                return NumbersEqual(left.GetRawText(), right.GetRawText(), options.NumericTolerance)
-                    ? null : path + ": expected " + Excerpt(left.GetRawText()) + ", received " + Excerpt(right.GetRawText()) + ".";
+                return NumbersEqual(left, right, options.NumericTolerance)
+                    ? null : $"{path}: expected {Excerpt(left.GetRawText())}, received {Excerpt(right.GetRawText())}.";
             case JsonValueKind.True:
             case JsonValueKind.False:
             case JsonValueKind.Null:
@@ -201,16 +242,16 @@ public sealed class DefaultSnapshotComparer : ISnapshotComparer
             value = value[1..];
         }
 
-        var e = value.IndexOf('e');
-        if (e < 0)
+        var exponentPosition = value.IndexOf('e');
+        if (exponentPosition < 0)
         {
-            e = value.IndexOf('E');
+            exponentPosition = value.IndexOf('E');
         }
 
-        var exponent = e < 0 ? BigInteger.Zero : BigInteger.Parse(value[(e + 1)..], CultureInfo.InvariantCulture);
-        if (e >= 0)
+        var exponent = exponentPosition < 0 ? BigInteger.Zero : BigInteger.Parse(value[(exponentPosition + 1)..], CultureInfo.InvariantCulture);
+        if (exponentPosition >= 0)
         {
-            value = value[..e];
+            value = value[..exponentPosition];
         }
 
         var dot = value.IndexOf('.');
@@ -235,11 +276,13 @@ public sealed class DefaultSnapshotComparer : ISnapshotComparer
         return new(value[..length], exponent, negative);
     }
 
-    private static bool NumbersEqual(string left, string right, decimal tolerance)
+    private static bool NumbersEqual(JsonElement left, JsonElement right, decimal tolerance)
     {
-        var a = ParseNumber(left);
-        var b = ParseNumber(right);
-        if (a == b)
+        var leftText = left.GetRawText();
+        var rightText = right.GetRawText();
+        ValidateExponent(leftText);
+        ValidateExponent(rightText);
+        if (JsonElement.DeepEquals(left, right))
         {
             return true;
         }
@@ -249,13 +292,15 @@ public sealed class DefaultSnapshotComparer : ISnapshotComparer
             return false;
         }
 
-        var t = ParseNumber(tolerance.ToString("G29", CultureInfo.InvariantCulture));
-        var minimum = BigInteger.Min(a.Exponent, BigInteger.Min(b.Exponent, t.Exponent));
-        foreach (var number in new[] { a, b, t })
+        var expectedNumber = ParseNumber(leftText);
+        var receivedNumber = ParseNumber(rightText);
+        var toleranceNumber = ParseNumber(tolerance.ToString("G29", CultureInfo.InvariantCulture));
+        var minimum = BigInteger.Min(expectedNumber.Exponent, BigInteger.Min(receivedNumber.Exponent, toleranceNumber.Exponent));
+        foreach (var number in new[] { expectedNumber, receivedNumber, toleranceNumber })
         {
-            if (number.Digits.Length > 4096 || number.Exponent - minimum > 20000)
+            if (number.Digits.Length > MaximumToleranceDigits || number.Exponent - minimum > MaximumToleranceScale)
             {
-                throw new SnapshotException("Exact numeric tolerance exceeds its arithmetic budget. Supply a custom comparer.");
+                throw new SnapshotException("Exact numeric tolerance exceeds its arithmetic budget. Supply expectedNumber custom comparer.");
             }
         }
 
@@ -269,34 +314,21 @@ public sealed class DefaultSnapshotComparer : ISnapshotComparer
 
             return mantissa * BigInteger.Pow(10, (int)(number.Exponent - minimum));
         }
-        return BigInteger.Abs(Scale(a) - Scale(b)) <= Scale(t);
+        return BigInteger.Abs(Scale(expectedNumber) - Scale(receivedNumber)) <= Scale(toleranceNumber);
     }
 
-    private static void ValidateJson(JsonElement element)
+    private static void ValidateExponent(string number)
     {
-        if (element.ValueKind == JsonValueKind.Object)
+        var position = number.AsSpan().IndexOfAny('e', 'E');
+        if (position >= 0 && (!int.TryParse(number.AsSpan(position + 1), NumberStyles.AllowLeadingSign,
+                CultureInfo.InvariantCulture, out var exponent)
+            || exponent is < -MaximumExponentMagnitude or > MaximumExponentMagnitude))
         {
-            var names = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var property in element.EnumerateObject())
-            {
-                if (!names.Add(property.Name))
-                {
-                    throw new SnapshotException("JSON baseline contains a duplicate property: " + property.Name);
-                }
-
-                ValidateJson(property.Value);
-            }
-        }
-        else if (element.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var child in element.EnumerateArray())
-            {
-                ValidateJson(child);
-            }
+            throw new SnapshotException($"JSON number exponent exceeds the supported range -{MaximumExponentMagnitude}..{MaximumExponentMagnitude}. Supply a custom comparer.");
         }
     }
 
-    private static string ComparableText(string value, SnapshotComparison options)
+    private static string ComparableText(string value, ResolvedSnapshotComparison options)
     {
         if (options.IgnoreLineEndings)
         {
@@ -306,7 +338,7 @@ public sealed class DefaultSnapshotComparer : ISnapshotComparer
         if (options.IgnoreTrailingWhitespace)
         {
             value = string.Join("\n", value.Split('\n').Select(static line =>
-                line.EndsWith('\r') ? line[..^1].TrimEnd(' ', '\t') + "\r" : line.TrimEnd(' ', '\t')));
+                line.EndsWith('\r') ? $"{line[..^1].TrimEnd(' ', '\t')}\r" : line.TrimEnd(' ', '\t')));
         }
 
         return value;
@@ -315,11 +347,11 @@ public sealed class DefaultSnapshotComparer : ISnapshotComparer
     private static string Excerpt(string value)
     {
         var escaped = value.Replace("\\", "\\\\").Replace("\r", "\\r").Replace("\t", "\\t").Replace("\n", "\\n");
-        if (escaped.Length > 160)
+        if (escaped.Length > MaximumExcerptCharacters)
         {
-            escaped = escaped[..160] + "...";
+            escaped = $"{escaped[..MaximumExcerptCharacters]}...";
         }
 
-        return "\"" + escaped.Replace("\"", "\\\"") + "\"";
+        return $"\"{escaped.Replace("\"", "\\\"")}\"";
     }
 }

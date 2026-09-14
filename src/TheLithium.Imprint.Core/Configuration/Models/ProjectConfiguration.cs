@@ -16,7 +16,11 @@ internal sealed record ProjectConfiguration
     {
         get; init;
     }
-    internal SnapshotFormat TextFormat { get; init; } = SnapshotFormat.Text;
+    internal SnapshotStringContent StringContent
+    {
+        get; init;
+    }
+    internal SnapshotRepresentationOptions Representation { get; init; } = new();
     internal SnapshotNaming Naming { get; init; } = SnapshotNaming.NameThenOrder;
     internal SnapshotComparison Comparison { get; init; } = new();
     internal bool AllowEmpty

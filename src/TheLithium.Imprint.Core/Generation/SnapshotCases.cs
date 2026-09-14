@@ -22,7 +22,7 @@ public static class SnapshotCases
         }
         var json = SnapshotEncoding.Utf8.GetString(stream.ToArray());
         var canonical = SnapshotEncoding.CanonicalJson(json, SnapshotLimits.DefaultDepth, MaximumCaseBytes);
-        using var document = JsonDocument.Parse(canonical);
+        using var document = StrictJson.Parse(canonical, SnapshotLimits.DefaultDepth);
         var values = document.RootElement.EnumerateObject().ToArray();
         var label = string.Join(", ", values.Select(property => $"{property.Name}={Render(property.Value)}"));
         if (label.Length > MaximumLabelLength)

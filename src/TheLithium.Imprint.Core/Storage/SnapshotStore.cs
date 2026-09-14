@@ -22,11 +22,11 @@ internal sealed class SnapshotStore
         var claim = Claims.GetOrAdd(physicalKey, settings.IdentityKey);
         if (claim != settings.IdentityKey)
         {
-            throw new SnapshotConflictException("Two test identities resolve to the same portable snapshot directory: " + settings.TestDirectory);
+            throw new SnapshotConflictException($"Two test identities resolve to the same portable snapshot directory: {settings.TestDirectory}");
         }
         // A stable project lock path lets processes with different diagnostic paths coordinate.
         // Lock files are intentionally not deleted: unlinking them creates a lock-inode race.
-        _lockPath = Path.Combine(settings.StorageRoot, "locks", physicalKey + ".lock");
+        _lockPath = Path.Combine(settings.StorageRoot, "locks", $"{physicalKey}.lock");
     }
 
     internal BaselineState Read()
@@ -42,7 +42,7 @@ internal sealed class SnapshotStore
         Recover();
         if (ReadUnlocked().Fingerprint != expected.Fingerprint)
         {
-            throw new SnapshotConflictException("The baseline changed during verification. Rerun the test: " + _settings.DisplayName);
+            throw new SnapshotConflictException($"The baseline changed during verification. Rerun the test: {_settings.DisplayName}");
         }
     }
 
@@ -59,12 +59,11 @@ internal sealed class SnapshotStore
         var current = ReadUnlocked();
         if (current.Fingerprint != expected.Fingerprint)
         {
-            throw new SnapshotConflictException("The baseline changed during this test. Nothing was approved. Rerun the test: " + _settings.DisplayName);
+            throw new SnapshotConflictException($"The baseline changed during this test. Nothing was approved. Rerun the test: {_settings.DisplayName}");
         }
 
         EnsureSafeDirectory(_journal);
         Directory.CreateDirectory(Path.Combine(_journal, "before"));
-        Directory.CreateDirectory(Path.Combine(_journal, "after"));
         try
         {
             foreach (var file in current.Files)
@@ -75,7 +74,6 @@ internal sealed class SnapshotStore
             foreach (var file in desired)
             {
                 ValidateFileName(file.Key);
-                DurableWrite(Path.Combine(_journal, "after", file.Key), file.Value);
             }
             DurableWrite(Path.Combine(_journal, "before.fingerprint"), current.Fingerprint);
             _settings.Cancellation.ThrowIfCancellationRequested();
@@ -93,8 +91,8 @@ internal sealed class SnapshotStore
             }
             catch (Exception rollback)
             {
-                throw new SnapshotException("Snapshot commit failed and automatic recovery could not complete. " +
-                    "Preserve the journal at " + _journal + ".", new AggregateException(error, rollback));
+                throw new SnapshotException($"Snapshot commit failed and automatic recovery could not complete. Preserve the journal at {_journal}.",
+                    new AggregateException(error, rollback));
             }
             throw;
         }
@@ -146,16 +144,16 @@ internal sealed class SnapshotStore
 
             if (!seen.Add(name))
             {
-                throw new SnapshotConflictException("Case-insensitive snapshot filename collision in " + directory + ".");
+                throw new SnapshotConflictException($"Case-insensitive snapshot filename collision in {directory}.");
             }
 
             if (result.Count >= SnapshotLimits.MaximumEntries)
             {
-                throw new SnapshotException("A test directory cannot contain more than 1024 snapshot files.");
+                throw new SnapshotException($"A test directory cannot contain more than {SnapshotLimits.MaximumEntries} snapshot files.");
             }
 
-            CheckLink(path);
-            var value = ReadText(path, _settings.MaxBytesPerSnapshot);
+            SnapshotPaths.CheckLink(path);
+            var value = SnapshotFileReader.ReadText(path, _settings.MaxBytesPerSnapshot);
             total += SnapshotEncoding.Utf8.GetByteCount(value);
             if (total > Math.Max(_settings.MaxBytesPerSnapshot, SnapshotLimits.TestBytes))
             {
@@ -177,14 +175,14 @@ internal sealed class SnapshotStore
 
         foreach (var marker in new[] { "prepared", "committed", "before.fingerprint" })
         {
-            CheckLink(Path.Combine(_journal, marker));
+            SnapshotPaths.CheckLink(Path.Combine(_journal, marker));
         }
 
         if (File.Exists(Path.Combine(_journal, "committed")))
         {
-            if (ReadText(Path.Combine(_journal, "committed"), 128) != SnapshotProtocol.JournalMarker)
+            if (SnapshotFileReader.ReadText(Path.Combine(_journal, "committed"), SnapshotLimits.JournalMarkerBytes) != SnapshotProtocol.JournalMarker)
             {
-                throw new SnapshotConflictException("Unrecognized snapshot journal version: " + _journal);
+                throw new SnapshotConflictException($"Unrecognized snapshot journal version: {_journal}");
             }
 
             if (!_settings.ReadOnly)
@@ -199,21 +197,20 @@ internal sealed class SnapshotStore
             // Recovery mutates baselines and is never implicit in an enforced read-only run.
             if (_settings.ReadOnly)
             {
-                throw new SnapshotConflictException("An interrupted snapshot update needs recovery. " +
-                    "Run locally with writes enabled before verification: " + _journal);
+                throw new SnapshotConflictException($"An interrupted snapshot update needs recovery. Run locally with writes enabled before verification: {_journal}");
             }
 
-            if (ReadText(Path.Combine(_journal, "prepared"), 128) != SnapshotProtocol.JournalMarker
+            if (SnapshotFileReader.ReadText(Path.Combine(_journal, "prepared"), SnapshotLimits.JournalMarkerBytes) != SnapshotProtocol.JournalMarker
                 || !Directory.Exists(Path.Combine(_journal, "before"))
                 || !File.Exists(Path.Combine(_journal, "before.fingerprint")))
             {
-                throw new SnapshotConflictException("Incomplete or unrecognized snapshot recovery journal: " + _journal);
+                throw new SnapshotConflictException($"Incomplete or unrecognized snapshot recovery journal: {_journal}");
             }
 
             var previous = ReadFiles(Path.Combine(_journal, "before"));
-            if (Fingerprint(previous) != ReadText(Path.Combine(_journal, "before.fingerprint"), 128))
+            if (Fingerprint(previous) != SnapshotFileReader.ReadText(Path.Combine(_journal, "before.fingerprint"), SnapshotLimits.JournalMarkerBytes))
             {
-                throw new SnapshotConflictException("Snapshot recovery backup failed its integrity check. Preserve " + _journal);
+                throw new SnapshotConflictException($"Snapshot recovery backup failed its integrity check. Preserve {_journal}");
             }
 
             Apply(previous);
@@ -234,12 +231,12 @@ internal sealed class SnapshotStore
             var name = Path.GetFileName(path);
             if (SnapshotFileNames.IsSnapshotFile(name) && !files.ContainsKey(name))
             {
-                CheckLink(path);
+                SnapshotPaths.CheckLink(path);
                 File.Delete(path);
             }
             else if (name.StartsWith(".imprint-tmp-", StringComparison.Ordinal))
             {
-                CheckLink(path);
+                SnapshotPaths.CheckLink(path);
                 File.Delete(path);
             }
         }
@@ -255,7 +252,7 @@ internal sealed class SnapshotStore
         _settings.Cancellation.ThrowIfCancellationRequested();
         var directory = Path.GetDirectoryName(_lockPath) ?? throw new SnapshotConfigurationException("The lock path has no parent directory.");
         EnsureSafeDirectory(directory);
-        CheckLink(_lockPath);
+        SnapshotPaths.CheckLink(_lockPath);
         var elapsed = Stopwatch.StartNew();
         while (true)
         {
@@ -271,80 +268,33 @@ internal sealed class SnapshotStore
             }
             catch (IOException error)
             {
-                throw new SnapshotException("Could not acquire the snapshot write lock: " + _settings.DisplayName, error);
+                throw new SnapshotException($"Could not acquire the snapshot write lock: {_settings.DisplayName}", error);
             }
         }
     }
 
     private void EnsureSafeDirectory(string path, bool create = true)
     {
-        var root = Path.GetFullPath(_settings.BaselineRoot);
         path = Path.GetFullPath(path);
-        if (path == _settings.StorageRoot || path.StartsWith(_settings.StorageRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-        {
-            root = Path.GetFullPath(_settings.StorageRoot);
-        }
-        var relative = Path.GetRelativePath(root, path);
-        if (relative == ".." || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
-            || Path.IsPathRooted(relative))
+        var root = SnapshotPaths.Contains(_settings.StorageRoot, path) ? _settings.StorageRoot : _settings.BaselineRoot;
+        if (!SnapshotPaths.Contains(root, path))
         {
             throw new SnapshotConfigurationException("Snapshot storage path escapes its configured root.");
         }
 
-        CheckLink(root);
-        var cursor = root;
-        foreach (var part in relative.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
-        {
-            if (part == ".")
-            {
-                continue;
-            }
-
-            cursor = Path.Combine(cursor, part);
-            CheckLink(cursor);
-        }
+        SnapshotPaths.CheckPath(_settings.Identity.ProjectDirectory, path);
         if (create)
         {
             Directory.CreateDirectory(path);
         }
     }
 
-    private static void CheckLink(string path)
-    {
-        try
-        {
-            if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
-            {
-                throw new SnapshotConfigurationException("Symlinks/reparse points inside snapshot storage are not supported: " + path);
-            }
-        }
-        catch (FileNotFoundException) { }
-        catch (DirectoryNotFoundException) { }
-    }
-
-    private static string ReadText(string path, int maximum)
-    {
-        var info = new FileInfo(path);
-        if (info.Length > maximum)
-        {
-            throw new SnapshotException("Snapshot file exceeds its size limit: " + path);
-        }
-        // Strict UTF-8. No BOM or implicit UTF-16 conversion.
-        var bytes = File.ReadAllBytes(path);
-        if (bytes.Length > maximum)
-        {
-            throw new SnapshotException("Snapshot file grew beyond its size limit: " + path);
-        }
-
-        return SnapshotEncoding.Utf8.GetString(bytes);
-    }
-
     private static void AtomicWrite(string path, string text)
     {
-        CheckLink(path);
+        SnapshotPaths.CheckLink(path);
         var directory = Path.GetDirectoryName(path)
             ?? throw new SnapshotConfigurationException("The snapshot path has no parent directory.");
-        var temporary = Path.Combine(directory, ".imprint-tmp-" + Guid.NewGuid().ToString("N"));
+        var temporary = Path.Combine(directory, $".imprint-tmp-{Guid.NewGuid():N}");
         try
         {
             DurableWrite(temporary, text);
@@ -361,7 +311,7 @@ internal sealed class SnapshotStore
 
     private static void DurableWrite(string path, string text)
     {
-        CheckLink(path);
+        SnapshotPaths.CheckLink(path);
         using var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
         file.Write(SnapshotEncoding.Utf8.GetBytes(text));
         file.Flush(flushToDisk: true);

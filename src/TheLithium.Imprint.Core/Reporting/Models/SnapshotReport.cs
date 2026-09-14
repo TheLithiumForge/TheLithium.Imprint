@@ -44,6 +44,11 @@ public sealed record SnapshotReport
     {
         get; init;
     }
+    /// <summary>Secondary diagnostic failure, when expected/received artifacts could not be written.</summary>
+    public string? ArtifactError
+    {
+        get; init;
+    }
 
     /// <summary>Deconstructs the report into its result fields.</summary>
     public void Deconstruct(out string test, out bool success, out IReadOnlyList<SnapshotEntryResult> entries,

@@ -34,12 +34,12 @@ internal sealed record EffectiveSettings
     {
         get; init;
     }
-    /// <summary>True when the resolved policy is Verify, so no path may write to disk.</summary>
+    /// <summary>Forbids baseline mutation and prepared recovery; locks and failure diagnostics may still write.</summary>
     public required bool ReadOnly
     {
         get; init;
     }
-    public required SnapshotComparison Comparison
+    public required ResolvedSnapshotComparison Comparison
     {
         get; init;
     }
@@ -47,7 +47,11 @@ internal sealed record EffectiveSettings
     {
         get; init;
     }
-    public required SnapshotFormat TextFormat
+    public required ResolvedSnapshotRepresentation Representation
+    {
+        get; init;
+    }
+    public required SnapshotStringContent StringContent
     {
         get; init;
     }

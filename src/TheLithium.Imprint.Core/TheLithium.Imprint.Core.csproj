@@ -8,6 +8,7 @@
     <PackageTags>snapshot;testing;nativeaot;imprint</PackageTags>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="TheLithium.Imprint.Tests" />
     <None Include="../../README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 </Project>

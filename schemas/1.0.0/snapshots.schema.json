@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/TheLithiumForge/TheLithium.Imprint/main/snapshots.schema.json",
+  "$id": "https://raw.githubusercontent.com/TheLithiumForge/TheLithium.Imprint/main/schemas/1.0.0/snapshots.schema.json",
   "title": "TheLithium.Imprint project configuration",
   "description": "Optional snapshots.config.json in the test-project root. Every property has a default, so the file is only needed to change one.",
   "type": "object",
@@ -53,15 +53,22 @@
           "type": "string",
           "minLength": 1,
           "default": "artifacts/imprint/failures"
-        },
-        "textFileExtension": {
-          "description": "File extension for text snapshots.",
-          "enum": [
-            "snap",
-            "txt"
-          ],
-          "default": "txt"
         }
+      }
+    },
+    "stringContent": {
+      "description": "Interpret root strings as ordinary values or already serialized JSON documents. No content detection.",
+      "enum": ["value", "json"],
+      "default": "value"
+    },
+    "representation": {
+      "description": "Enum, byte-array and dictionary preferences applied throughout a capture. Individual categories can be overridden for a test or assertion.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enums": { "enum": ["name-or-number", "number"], "default": "name-or-number" },
+        "byteArrays": { "enum": ["numbers", "base64"], "default": "numbers" },
+        "dictionaries": { "enum": ["automatic", "entries"], "default": "automatic" }
       }
     },
     "naming": {

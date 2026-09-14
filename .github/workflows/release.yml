@@ -40,6 +40,9 @@ jobs:
     timeout-minutes: 35
     permissions:
       contents: write
+      # Lets the job request the OIDC token that nuget.org exchanges for a
+      # short-lived API key. Without it, trusted publishing cannot work.
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -47,35 +50,10 @@ jobs:
           global-json-file: global.json
       - name: Resolve release version
         id: version
-        shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_PRERELEASE: ${{ inputs.prerelease }}
-        run: |
-          set -euo pipefail
-
-          version="${INPUT_VERSION:-}"
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            version="${GITHUB_REF_NAME#v}"
-          fi
-          version="${version#v}"
-
-          if [[ ! "$version" =~ ^([0-9]+\.){2}[0-9]+([.-][0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
-            echo "Version '$version' is not valid SemVer." >&2
-            exit 1
-          fi
-
-          tag="v$version"
-          prerelease="${INPUT_PRERELEASE:-false}"
-          if [[ "$version" == *-* ]]; then
-            prerelease=true
-          fi
-
-          {
-            echo "version=$version"
-            echo "tag=$tag"
-            echo "prerelease=$prerelease"
-          } >> "$GITHUB_OUTPUT"
+        run: node .github/scripts/resolve-version.mjs
       - name: Restore release build
         run: >-
           dotnet restore TheLithium.Imprint.slnx
@@ -139,57 +117,30 @@ jobs:
       - name: Run packed Native AOT specifications
         run: ./artifacts/native/release-linux-x64/TheLithium.Imprint.Specifications --expect-aot
       - name: Verify package outputs
-        shell: bash
-        run: |
-          shopt -s nullglob
-          packages=(artifacts/packages/*.nupkg)
-          if [[ ${#packages[@]} -ne 2 ]]; then
-            echo "Expected exactly two NuGet packages, found ${#packages[@]}." >&2
-            exit 1
-          fi
+        run: node .github/scripts/verify-packages.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: release-packages
           path: |
             artifacts/packages/*.nupkg
             artifacts/package-test-results
-      - name: Check NuGet credentials
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        shell: bash
-        run: |
-          if [[ -z "${NUGET_API_KEY:-}" ]]; then
-            echo "The NUGET_API_KEY repository secret is required for a release." >&2
-            exit 1
-          fi
+
+      # Everything above must succeed before a credential exists at all. The key below is
+      # minted by nuget.org for this run and expires in one hour, so it is requested here
+      # rather than at the start of the job.
+      - name: Request a short-lived NuGet key (trusted publishing)
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
       - name: Publish packages to NuGet.org
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          for package in artifacts/packages/*.nupkg; do
-            dotnet nuget push "$package" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
-          done
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: node .github/scripts/publish-packages.mjs
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
           RELEASE_PRERELEASE: ${{ steps.version.outputs.prerelease }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          arguments=(
-            "$RELEASE_TAG"
-            artifacts/packages/*.nupkg
-            --title "TheLithium.Imprint $RELEASE_VERSION"
-            --generate-notes
-            --target "$GITHUB_SHA"
-          )
-          if [[ "$RELEASE_PRERELEASE" == true ]]; then
-            arguments+=(--prerelease)
-          fi
-
-          gh release create "${arguments[@]}"
+        run: node .github/scripts/create-release.mjs

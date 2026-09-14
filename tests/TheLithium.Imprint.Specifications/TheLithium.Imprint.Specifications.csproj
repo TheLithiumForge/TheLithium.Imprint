@@ -7,6 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Engine specifications deliberately open and fail explicit integration lifetimes. -->
-    <Compile Update="Specs.cs;AdditionalSpecs.cs" ImprintInstrument="false" />
+    <Compile Update="Specs.cs;AdditionalSpecs.cs;SecuritySpecs.cs;JsonBoundarySpecs.cs;RepresentationSpecs.cs;TransactionSpecs.cs" ImprintInstrument="false" />
   </ItemGroup>
 </Project>

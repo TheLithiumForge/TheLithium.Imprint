@@ -18,7 +18,7 @@ internal static class Settings
         var configFile = options.ConfigurationFile;
         var explicitConfig = configFile is not null;
         configFile = configFile is null ? Path.Combine(project, "snapshots.config.json") : FullPath(project, configFile);
-        var config = ProjectConfigurationReader.Read(configFile, explicitConfig);
+        var config = ProjectConfigurationReader.Read(configFile, explicitConfig, options.CancellationToken);
         if (options.Identity is null && config.UseFrameworkDisplayNames && descriptor?.DisplayName is { Length: > 0 } displayName)
         {
             identity = identity with { Test = displayName };
@@ -55,23 +55,23 @@ internal static class Settings
         }
         var artifacts = FullPath(project, options.ArtifactDirectory ?? config.ArtifactDirectory ?? Path.Combine(buildArtifacts, "imprint", "failures"));
         var storage = Path.Combine(buildArtifacts, "imprint", "storage");
-        // Diagnostics and recovery files must stay outside the reviewed snapshot tree.
-        var relativeArtifact = Path.GetRelativePath(baselineRoot, artifacts);
-        if (relativeArtifact == "." || (!Path.IsPathRooted(relativeArtifact)
-            && relativeArtifact != ".." && !relativeArtifact.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
-        {
-            throw new SnapshotConfigurationException("ArtifactDirectory must be outside the baseline root.");
-        }
+        // Validate before opening the store: diagnostic paths must never redirect
+        // into reviewed baselines or recovery state, even during verification.
+        SnapshotPaths.RequireSeparate(baselineRoot, artifacts);
+        SnapshotPaths.RequireSeparate(baselineRoot, storage);
+        SnapshotPaths.RequireSeparate(artifacts, storage);
+        SnapshotPaths.CheckPath(project, baselineRoot);
+        SnapshotPaths.CheckPath(project, artifacts);
+        SnapshotPaths.CheckPath(project, storage);
 
-        var comparison = options.Comparison ?? config.Comparison;
-        ValidateComparison(comparison);
+        var comparison = ResolvedSnapshotComparison.Defaults.Apply(config.Comparison).Apply(options.Comparison);
+        var representation = ResolvedSnapshotRepresentation.Defaults.Apply(config.Representation).Apply(options.Representation);
+        var stringContent = options.StringContent ?? config.StringContent;
+        ValidateStringContent(stringContent);
         var depth = options.MaxNestingDepth ?? config.MaxNestingDepth;
         var nodes = options.MaxValuesPerSnapshot ?? config.MaxValuesPerSnapshot;
         var bytes = options.MaxBytesPerSnapshot ?? config.MaxBytesPerSnapshot;
-        if (depth is < 1 or > SnapshotLimits.MaximumDepth || nodes is < 1 or > SnapshotLimits.MaximumNodes || bytes is < 1 or > SnapshotLimits.MaximumBytes)
-        {
-            throw new SnapshotConfigurationException("Limits: MaxNestingDepth 1..256, MaxValuesPerSnapshot 1..10000000, MaxBytesPerSnapshot 1..268435456.");
-        }
+        ValidateLimits(depth, nodes, bytes);
 
         var naming = options.Naming ?? config.Naming;
         if ((int)naming < (int)SnapshotNaming.NameThenOrder || (int)naming > (int)SnapshotNaming.ExplicitOnly)
@@ -92,7 +92,8 @@ internal static class Settings
             ReadOnly = readOnly,
             Comparison = comparison,
             Naming = naming,
-            TextFormat = config.TextFormat,
+            Representation = representation,
+            StringContent = stringContent,
             AllowEmpty = options.AllowEmpty ?? config.AllowEmpty,
             MaxNestingDepth = depth,
             MaxValuesPerSnapshot = nodes,
@@ -146,9 +147,25 @@ internal static class Settings
             throw new SnapshotConfigurationException("NumericTolerance cannot be negative.");
         }
 
-        if (comparison.MaxUnorderedArrayLength is < 1 or > 1024)
+        if (comparison.MaxUnorderedArrayLength is < 1 or > SnapshotLimits.MaximumUnorderedArrayLength)
         {
-            throw new SnapshotConfigurationException("MaxUnorderedArrayLength must be 1..1024.");
+            throw new SnapshotConfigurationException($"MaxUnorderedArrayLength must be 1..{SnapshotLimits.MaximumUnorderedArrayLength}.");
+        }
+    }
+
+    internal static void ValidateStringContent(SnapshotStringContent content)
+    {
+        if (content is not (SnapshotStringContent.Value or SnapshotStringContent.Json))
+        {
+            throw new SnapshotConfigurationException("Invalid string-content policy.");
+        }
+    }
+
+    internal static void ValidateLimits(int depth, int nodes, int bytes)
+    {
+        if (depth is < 1 or > SnapshotLimits.MaximumDepth || nodes is < 1 or > SnapshotLimits.MaximumNodes || bytes is < 1 or > SnapshotLimits.MaximumBytes)
+        {
+            throw new SnapshotConfigurationException($"Limits: MaxNestingDepth 1..{SnapshotLimits.MaximumDepth}, MaxValuesPerSnapshot 1..{SnapshotLimits.MaximumNodes}, MaxBytesPerSnapshot 1..{SnapshotLimits.MaximumBytes}.");
         }
     }
 
@@ -172,7 +189,7 @@ internal static class Settings
         {
             "true" or "1" => true,
             "false" or "0" => false,
-            _ => throw new SnapshotConfigurationException(name + " must be true, false, 1, or 0.")
+            _ => throw new SnapshotConfigurationException($"{name} must be true, false, 1, or 0.")
         };
     }
 

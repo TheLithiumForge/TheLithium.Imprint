@@ -88,6 +88,10 @@ jobs:
         run: dotnet build TheLithium.Imprint.slnx -c Release --no-restore
       - name: Pack local feed
         run: dotnet pack TheLithium.Imprint.slnx -c Release --no-build --no-restore
+      - name: Verify independent external consumers (managed and Native AOT)
+        run: >-
+          node tests/ExternalConsumer/verify-package-consumers.ts
+          --output-root '${{ runner.temp }}/imprint-external-consumer'
       - name: Restore package consumers
         run: dotnet restore TheLithium.Imprint.slnx -p:UsePackageReferences=true -p:RestorePackagesPath=artifacts/nuget/package-consumer --force-evaluate
       - name: Test packaged consumers (managed / non-Native AOT)
@@ -132,6 +136,8 @@ jobs:
             artifacts/test-results
             artifacts/package-test-results
             artifacts/packages
+            ${{ runner.temp }}/imprint-external-consumer/logs
+            ${{ runner.temp }}/imprint-external-consumer/package-hashes.json
 
   xunit:
     name: xUnit (managed / non-Native AOT)

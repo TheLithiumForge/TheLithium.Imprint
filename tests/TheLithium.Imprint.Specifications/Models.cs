@@ -44,6 +44,15 @@ internal static class GeneratedFixtures
     [Xunit.Fact(DisplayName = "Readable generated display")]
     internal static void PreferredDisplayName() => 1.AssertSnapshot("value");
 
+    [SnapshotSettings]
+    internal static void ConfigureOrdinaryLifetime()
+    {
+        Snapshots.Current.Comparison = new() { IgnoreStringCase = true };
+        Snapshots.Current.Representation = new() { Enums = SnapshotEnumRepresentation.Number };
+        Snapshots.Current.StringContent = SnapshotStringContent.Value;
+        Check.True(Snapshots.Current.Comparison.IgnoreStringCase == true);
+    }
+
     internal static void Parameterized(string name) => Snapshots.Run(() => name.AssertSnapshot("value"));
 
     internal static void ParameterizedWithCase(string name) => Snapshots.Run(

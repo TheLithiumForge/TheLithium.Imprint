@@ -15,11 +15,14 @@ public sealed class SnapshotScope : IDisposable
     private readonly SnapshotStore _store;
     private readonly BaselineState _baseline;
     private readonly SnapshotScope? _previous;
-    private readonly List<CapturedValue> _values = new();
+    private readonly List<CapturedValue> _values = [];
     private readonly HashSet<string> _names = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> _automatic = new(StringComparer.OrdinalIgnoreCase);
     private readonly string _executionId = Guid.NewGuid().ToString("N");
     private SnapshotUpdate _update;
+    private ResolvedSnapshotComparison _comparison;
+    private ResolvedSnapshotRepresentation _representation;
+    private SnapshotStringContent _stringContent;
     private State _state;
     private bool _started;
     private bool _disposed;
@@ -27,12 +30,16 @@ public sealed class SnapshotScope : IDisposable
     private long _bytes;
     private Exception? _captureFailure;
     private bool _artifactsWritten;
+    private string? _artifactError;
 
     internal SnapshotScope(EffectiveSettings settings, SnapshotScope? previous)
     {
         _settings = settings;
         _previous = previous;
         _update = settings.Update;
+        _comparison = settings.Comparison;
+        _representation = settings.Representation;
+        _stringContent = settings.StringContent;
         _store = new(settings);
         _baseline = _store.Read();
     }
@@ -48,6 +55,54 @@ public sealed class SnapshotScope : IDisposable
     }
     /// <summary>Effective whole-test policy after environment and read-only enforcement.</summary>
     public SnapshotUpdate EffectiveUpdate => _settings.ResolveUpdate(SnapshotUpdate.Inherit, _update);
+
+    /// <summary>Effective comparison fields. Assign a patch before capture; unset fields retain their current values.</summary>
+    public SnapshotComparison Comparison
+    {
+        get
+        {
+            lock (_gate) { return _comparison.ToOptions(); }
+        }
+        set
+        {
+            lock (_gate) { ArgumentNullException.ThrowIfNull(value); EnsureConfigurable(); _comparison = _comparison.Apply(value); }
+        }
+    }
+
+    /// <summary>Effective representation preferences. Assign a patch before capture; unset categories retain their current values.</summary>
+    public SnapshotRepresentationOptions Representation
+    {
+        get
+        {
+            lock (_gate) { return _representation.ToOptions(); }
+        }
+        set
+        {
+            lock (_gate) { ArgumentNullException.ThrowIfNull(value); EnsureConfigurable(); _representation = _representation.Apply(value); }
+        }
+    }
+
+    /// <summary>Interpret root strings as values or serialized JSON. Set before capture.</summary>
+    public SnapshotStringContent StringContent
+    {
+        get
+        {
+            lock (_gate) { return _stringContent; }
+        }
+        set
+        {
+            lock (_gate) { EnsureConfigurable(); Settings.ValidateStringContent(value); _stringContent = value; }
+        }
+    }
+
+    private void EnsureConfigurable()
+    {
+        EnsureOpen();
+        if (_started)
+        {
+            throw new SnapshotConfigurationException("Set test configuration before the first capture.");
+        }
+    }
 
     /// <summary>Session-local. Must be set before the first capture.</summary>
     public SnapshotUpdate Update
@@ -87,15 +142,17 @@ public sealed class SnapshotScope : IDisposable
                 _settings.Cancellation.ThrowIfCancellationRequested();
                 var options = requested ?? new();
                 Settings.ValidateUpdate(options.Update);
-                var comparison = options.Comparison ?? _settings.Comparison;
-                Settings.ValidateComparison(comparison);
+                var comparison = _comparison.Apply(options.Comparison);
+                var representation = new CaptureRepresentation(options.Format, options.StringContent ?? _stringContent,
+                    _representation.Apply(options.Representation));
+                Settings.ValidateStringContent(representation.StringContent);
                 if (_values.Count >= SnapshotLimits.MaximumEntries)
                 {
-                    throw new SnapshotCaptureException("A test may capture at most 1024 values.");
+                    throw new SnapshotCaptureException($"A test may capture at most {SnapshotLimits.MaximumEntries} values.");
                 }
 
                 var name = ResolveName(explicitName, expression);
-                var encoded = SnapshotEncoding.Encode(value, options.Format, writer, _settings);
+                var encoded = SnapshotEncoding.Encode(value, writer, _settings, representation);
                 _bytes += SnapshotEncoding.Utf8.GetByteCount(encoded.Text);
                 if (_bytes > Math.Max(_settings.MaxBytesPerSnapshot, SnapshotLimits.TestBytes))
                 {
@@ -121,7 +178,7 @@ public sealed class SnapshotScope : IDisposable
             var name = PortableNames.Segment(explicitName);
             if (!_names.Add(name))
             {
-                throw new SnapshotCaptureException("Duplicate explicit snapshot name (case-insensitive): " + name);
+                throw new SnapshotCaptureException($"Duplicate explicit snapshot name (case-insensitive): {name}");
             }
 
             return name;
@@ -137,7 +194,7 @@ public sealed class SnapshotScope : IDisposable
             string sequential;
             do
             {
-                sequential = "snapshot-" + (++_unnamed).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                sequential = string.Create(System.Globalization.CultureInfo.InvariantCulture, $"snapshot-{++_unnamed}");
             }
             while (!_names.Add(sequential));
             return sequential;
@@ -148,7 +205,7 @@ public sealed class SnapshotScope : IDisposable
         do
         {
             count++;
-            candidate = count == 1 ? basis : basis + "-" + count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            candidate = count == 1 ? basis : string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{basis}-{count}");
         } while (!_names.Add(candidate));
         _automatic[basis] = count;
         return candidate;
@@ -175,123 +232,27 @@ public sealed class SnapshotScope : IDisposable
                     throw new SnapshotCaptureException("This snapshot test captured no values. Set AllowEmpty explicitly to approve an empty set.");
                 }
 
-                var desired = new Dictionary<string, string>(_baseline.Files, StringComparer.Ordinal);
-                var used = new HashSet<string>(StringComparer.Ordinal);
-                var entries = new List<SnapshotEntryResult>();
-                var approvedEntries = new List<SnapshotEntryResult>();
-                var authorized = true;
-                var changes = false;
-                foreach (var value in _values.OrderBy(x => x.Name, StringComparer.Ordinal))
+                var plan = SnapshotPlan.Evaluate(_settings, _update, _values, _baseline);
+                if (!plan.Authorized)
                 {
-                    var policy = _settings.ResolveUpdate(value.Update, _update);
-                    var candidates = _baseline.Files.Keys.Where(name => string.Equals(
-                        Path.GetFileNameWithoutExtension(name), value.Name, StringComparison.OrdinalIgnoreCase)).ToArray();
-                    if (candidates.Length > 1)
-                    {
-                        throw new SnapshotConflictException("More than one baseline format exists for " + value.Name + ". Remove the ambiguity before updating.");
-                    }
-
-                    if (candidates.Length == 0)
-                    {
-                        var entry = new SnapshotEntryResult(value.Name, value.FileName, SnapshotStatus.Missing, "No baseline exists.");
-                        entries.Add(entry);
-                        approvedEntries.Add(entry with
-                        {
-                            Status = SnapshotStatus.Created,
-                            Difference = null
-                        });
-                        if (policy is SnapshotUpdate.All or SnapshotUpdate.Missing)
-                        {
-                            desired[value.FileName] = value.Text;
-                            changes = true;
-                        }
-                        else
-                        {
-                            authorized = false;
-                        }
-
-                        continue;
-                    }
-                    var existing = candidates[0];
-                    used.Add(existing);
-                    SnapshotComparisonResult comparison;
-                    if (existing != value.FileName)
-                    {
-                        comparison = new(false, "Snapshot name or file format changed.");
-                    }
-                    else
-                    {
-                        comparison = (value.Comparer ?? DefaultSnapshotComparer.Instance)
-                        .Compare(_baseline.Files[existing], value.Text, value.Format, value.Comparison);
-                    }
-
-                    var entryResult = new SnapshotEntryResult(value.Name, value.FileName,
-                        comparison.Equal ? SnapshotStatus.Matched : SnapshotStatus.Changed, comparison.Difference);
-                    entries.Add(entryResult);
-                    if (!comparison.Equal && policy != SnapshotUpdate.All)
-                    {
-                        authorized = false;
-                    }
-
-                    if (policy == SnapshotUpdate.All && (existing != value.FileName || _baseline.Files[existing] != value.Text))
-                    {
-                        desired.Remove(existing);
-                        desired[value.FileName] = value.Text;
-                        changes = true;
-                        approvedEntries.Add(entryResult with
-                        {
-                            Status = SnapshotStatus.Updated,
-                            Difference = null
-                        });
-                    }
-                    else
-                    {
-                        approvedEntries.Add(entryResult);
-                    }
-                }
-                var testPolicy = _settings.ResolveUpdate(SnapshotUpdate.Inherit, _update);
-                foreach (var existing in _baseline.Files.Keys.Where(x => !used.Contains(x)).Order(StringComparer.Ordinal))
-                {
-                    // New entries have no existing filename in the baseline and do not reach this loop.
-                    var entry = new SnapshotEntryResult(Path.GetFileNameWithoutExtension(existing), existing,
-                        SnapshotStatus.Unused, "This test no longer captures this entry.");
-                    entries.Add(entry);
-                    approvedEntries.Add(entry with
-                    {
-                        Status = SnapshotStatus.Removed,
-                        Difference = null
-                    });
-                    if (testPolicy == SnapshotUpdate.All)
-                    {
-                        desired.Remove(existing);
-                        changes = true;
-                    }
-                    else
-                    {
-                        authorized = false;
-                    }
-                }
-                if (!authorized)
-                {
-                    var report = new SnapshotReport(_settings.DisplayName, false, entries.ToArray());
+                    var entries = plan.Entries(approved: false);
                     TryWriteArtifacts(entries, incomplete: false, error: null);
-                    report = report with
+                    throw new SnapshotMismatchException(new(_settings.DisplayName, false, entries)
                     {
-                        ArtifactDirectory = ArtifactDirectory
-                    };
-                    throw new SnapshotMismatchException(report);
+                        ArtifactDirectory = ArtifactDirectory,
+                        ArtifactError = _artifactError
+                    });
                 }
-                if (changes)
+                if (plan.Changes)
                 {
-                    _store.Commit(_baseline, desired);
+                    _store.Commit(_baseline, plan.DesiredFiles());
                 }
                 else
                 {
                     _store.VerifyUnchanged(_baseline);
                 }
-
                 _state = State.Completed;
-                return new(_settings.DisplayName, true, approvedEntries.ToArray());
+                return new(_settings.DisplayName, true, plan.Entries(approved: true));
             }
             catch
             {
@@ -313,12 +274,19 @@ public sealed class SnapshotScope : IDisposable
             }
 
             _state = State.Aborted;
-            TryWriteArtifacts(Array.Empty<SnapshotEntryResult>(), incomplete: true, error?.Message);
-            if (error is not null && ArtifactDirectory is not null)
+            TryWriteArtifacts([], incomplete: true, error?.Message);
+            if (error is not null)
             {
                 try
                 {
-                    error.Data["TheLithium.Imprint.Artifacts"] = ArtifactDirectory;
+                    if (ArtifactDirectory is not null)
+                    {
+                        error.Data["TheLithium.Imprint.Artifacts"] = ArtifactDirectory;
+                    }
+                    if (_artifactError is not null)
+                    {
+                        error.Data["TheLithium.Imprint.ArtifactError"] = _artifactError;
+                    }
                 }
                 catch (Exception) { /* Artifact diagnostics must not replace the original exception. */ }
             }
@@ -335,10 +303,18 @@ public sealed class SnapshotScope : IDisposable
         _artifactsWritten = true;
         try
         {
-            ArtifactDirectory = SnapshotArtifacts.Write(_settings, _executionId,
-                _values, _baseline, entries, incomplete, error);
+            ArtifactDirectory = SnapshotArtifacts.Write(new()
+            {
+                Settings = _settings,
+                ExecutionId = _executionId,
+                Values = _values,
+                Baseline = _baseline,
+                Entries = entries,
+                Incomplete = incomplete,
+                Error = error
+            });
         }
-        catch (Exception) { /* Best-effort diagnostics must never mask the original test failure. */ }
+        catch (Exception failure) { _artifactError = failure.Message; }
     }
 
     private void EnsureOpen()

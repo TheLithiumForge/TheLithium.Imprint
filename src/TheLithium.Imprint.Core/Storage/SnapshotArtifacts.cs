@@ -6,46 +6,48 @@ internal static class SnapshotArtifacts
 {
     private static readonly string RunId = Guid.NewGuid().ToString("N");
 
-    internal static string Write(EffectiveSettings settings, string executionId,
-        IReadOnlyList<CapturedValue> values, BaselineState baseline,
-        IReadOnlyList<SnapshotEntryResult> entries, bool incomplete, string? error)
+    internal static string Write(ArtifactRequest request)
     {
+        var settings = request.Settings;
         var directory = Path.Combine(settings.ArtifactRoot, RunId,
             PortableNames.Segment(settings.Identity.Suite),
-            PortableNames.Segment(settings.Identity.Test), executionId);
+            PortableNames.Segment(settings.Identity.Test), request.ExecutionId);
+        SnapshotPaths.CheckPath(settings.Identity.ProjectDirectory, directory);
         Directory.CreateDirectory(directory);
-        foreach (var value in values)
+        foreach (var value in request.Values)
         {
             var extension = Path.GetExtension(value.FileName);
             var name = Path.GetFileNameWithoutExtension(value.FileName);
-            File.WriteAllText(Path.Combine(directory, name + ".received" + extension), value.Text, SnapshotEncoding.Utf8);
+            WriteText(Path.Combine(directory, $"{name}.received{extension}"), value.Text);
         }
-        foreach (var entry in entries.Where(x => x.Status is SnapshotStatus.Changed or SnapshotStatus.Unused))
+        foreach (var entry in request.Entries.Where(x => x.Status is SnapshotStatus.Changed or SnapshotStatus.Unused))
         {
-            var existing = baseline.Files.Keys.FirstOrDefault(file => string.Equals(
+            var existing = request.Baseline.Files.Keys.FirstOrDefault(file => string.Equals(
                 Path.GetFileNameWithoutExtension(file), entry.Name, StringComparison.OrdinalIgnoreCase));
-            if (existing is not null && baseline.Files.TryGetValue(existing, out var expected))
+            if (existing is not null && request.Baseline.Files.TryGetValue(existing, out var expected))
             {
                 var extension = Path.GetExtension(existing);
                 var name = Path.GetFileNameWithoutExtension(existing);
-                File.WriteAllText(Path.Combine(directory, name + ".expected" + extension), expected, SnapshotEncoding.Utf8);
+                WriteText(Path.Combine(directory, $"{name}.expected{extension}"), expected);
             }
         }
-        using var stream = File.Create(Path.Combine(directory, "run.json"));
+        var reportPath = Path.Combine(directory, "run.json");
+        SnapshotPaths.CheckLink(reportPath);
+        using var stream = File.Create(reportPath);
         using var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true });
         writer.WriteStartObject();
         writer.WriteNumber("version", 1);
-        writer.WriteString("status", incomplete ? "incomplete" : "mismatch");
+        writer.WriteString("status", request.Incomplete ? "incomplete" : "mismatch");
         writer.WriteString("test", settings.DisplayName);
         writer.WriteString("baselineDirectory", settings.TestDirectory);
-        writer.WriteString("baselineFingerprint", baseline.Fingerprint);
-        if (error is not null)
+        writer.WriteString("baselineFingerprint", request.Baseline.Fingerprint);
+        if (request.Error is not null)
         {
-            writer.WriteString("error", error);
+            writer.WriteString("error", request.Error);
         }
 
         writer.WriteStartArray("entries");
-        foreach (var entry in entries)
+        foreach (var entry in request.Entries)
         {
             writer.WriteStartObject();
             writer.WriteString("name", entry.Name);
@@ -61,5 +63,11 @@ internal static class SnapshotArtifacts
         writer.WriteEndArray();
         writer.WriteEndObject();
         return directory;
+    }
+
+    private static void WriteText(string path, string text)
+    {
+        SnapshotPaths.CheckLink(path);
+        File.WriteAllText(path, text, SnapshotEncoding.Utf8);
     }
 }

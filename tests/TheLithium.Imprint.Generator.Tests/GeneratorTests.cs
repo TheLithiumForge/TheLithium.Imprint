@@ -15,6 +15,7 @@ public sealed class GeneratorTests
     [InlineData("new { Code = 1, Nested = new { Name = \"value\" } }")]
     [InlineData("new System.Collections.Generic.List<int> { 1, 2, 3 }")]
     [InlineData("new System.Collections.Generic.Dictionary<string, int> { [\"a\"] = 1 }")]
+    [InlineData("System.Linq.Enumerable.ToDictionary(new[] { new { Name = \"a\", Count = 1 } }, item => item.Name)")]
     [InlineData("new int[2, 3, 4]")]
     [InlineData("(1, \"two\", 3, 4, 5, 6, 7, 8, 9)")]
     [InlineData("(int?)42")]

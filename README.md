@@ -4,7 +4,7 @@
 [![NuGet](https://img.shields.io/nuget/vpre/TheLithium.Imprint?logo=nuget&label=NuGet)](https://www.nuget.org/packages/TheLithium.Imprint)
 [![.NET 10](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/download/dotnet/10.0)
 
-Native AOT, Snapshot testing library for .NET 10 and later. Add `.AssertSnapshot()` to a value in a test you already have.
+Imprint is a snapshot testing library for C#, designed for readable snapshots and straightforward code review. It generates snapshot writers at compile time and supports both ordinary .NET tests and Native AOT as first-class use cases. Add `.AssertSnapshot()` to a value in a test you already have.
 
 ```csharp
 [Fact]
@@ -26,6 +26,7 @@ Works with xUnit, NUnit, MSTest, and anything else that fails a test on an uncau
 
 - [Install](#install)
 - [Quick start](#quick-start)
+- [What the snapshots look like](#what-the-snapshots-look-like)
 - [The one rule](#the-one-rule)
 - [Updating snapshots](#updating-snapshots)
 - [API](#api)
@@ -104,6 +105,126 @@ public void CreatesAnOrder()
 
 Without a name, the variable name is used (`order.AssertSnapshot()` → `order.json`). Name them explicitly once you have more than one.
 
+## What the snapshots look like
+
+A snapshot is only worth having if you can read it in a pull request and tell at a glance whether the change is right. Everything below is real output.
+
+### Types are written the way you would write them
+
+```csharp
+new
+{
+    Status = Fulfilment.Shipped,
+    Placed = new DateTime(2026, 3, 9, 14, 5, 0, DateTimeKind.Utc),
+    Day = new DateOnly(2026, 3, 9),
+    Elapsed = TimeSpan.FromMinutes(93),
+    Id = Guid.Parse("6f9619ff-8b86-d011-b42d-00cf4fc964ff"),
+    Total = 42.50m,
+    Ratio = 0.1 + 0.2,
+    Big = long.MaxValue,
+    Missing = (int?)null,
+    Where = new Uri("https://example.com/orders?id=1&x=2"),
+    Tags = new[] { "keyboard", "cable" },
+    ByCountry = new Dictionary<string, int> { ["NL"] = 2, ["BE"] = 1 }
+}.AssertSnapshot("types");
+```
+
+```json
+{
+  "Big": 9223372036854775807,
+  "ByCountry": {
+    "BE": 1,
+    "NL": 2
+  },
+  "Day": "2026-03-09",
+  "Elapsed": "01:33:00",
+  "Id": "6f9619ff-8b86-d011-b42d-00cf4fc964ff",
+  "Missing": null,
+  "Placed": "2026-03-09T14:05:00.0000000Z",
+  "Ratio": 0.30000000000000004,
+  "Status": "Shipped",
+  "Tags": [
+    "keyboard",
+    "cable"
+  ],
+  "Total": 42.50,
+  "Where": "https://example.com/orders?id=1&x=2"
+}
+```
+
+Worth noticing:
+
+| Output | Why it matters |
+| --- | --- |
+| `"Status": "Shipped"` | Enums use their declared name, not `1`. A value with no exact declared name — a combined `[Flags]` value, say — falls back to the number. |
+| `"Placed": "2026-03-09T14:05:00.0000000Z"` | Dates are round-trippable ISO 8601, formatted invariantly. A machine in another culture produces the same bytes. |
+| `"Total": 42.50` | `decimal` keeps its scale. `42.50m` does not quietly become `42.5`. |
+| `"Ratio": 0.30000000000000004` | `double` is written exactly, so floating-point drift shows up in the diff instead of being rounded away. [`NumericTolerance`](#equality-rules) is there when you would rather ignore it. |
+| `"Big": 9223372036854775807` | Large integers stay exact. No `9.2E+18`. |
+| `"ByCountry": { "BE": 1, … }` | String-keyed dictionaries are objects, not arrays of key/value pairs. |
+| `"Where": "https://…?id=1&x=2"` | A `Uri` keeps its original string, `&` included. |
+
+Enums, byte arrays and dictionaries each have a second rendering if you prefer it — see [representation choices](docs/TYPE-SUPPORT.md#representation-choices).
+
+### Text stays readable
+
+```csharp
+new
+{
+    Accented = "café — naïve",
+    Japanese = "注文が完了しました",
+    Markup = "<b>bold</b> & \"quoted\"",
+    Apostrophe = "it's fine",
+    Path = @"C:\temp\file.txt",
+    Tabbed = "a\tb"
+}.AssertSnapshot("characters");
+```
+
+```json
+{
+  "Accented": "café — naïve",
+  "Apostrophe": "it's fine",
+  "Japanese": "注文が完了しました",
+  "Markup": "<b>bold</b> & \"quoted\"",
+  "Path": "C:\\temp\\file.txt",
+  "Tabbed": "a\tb"
+}
+```
+
+Accented Latin, CJK, Cyrillic, Arabic and symbols are written as themselves — and so are `<`, `>`, `&` and `'`, which many JSON writers escape by default so the output is safe to paste into HTML. That protection is irrelevant for a file on disk and ruinous for review. A suite written in French, German or Japanese produces snapshots you can actually read.
+
+Only what JSON genuinely requires is escaped: `"`, `\`, and control characters such as tab and newline. Characters above the Basic Multilingual Plane — emoji, mostly — are written as surrogate escapes, so `"📦"` is stored as `"\uD83D\uDCE6"`. That is `Utf8JsonWriter` behaviour, not a choice Imprint makes.
+
+Escaping is never lossy. `C:\temp\file.txt` reads back as exactly that, and a real tab stays distinct from the two characters `\` and `t`.
+
+A captured string is not JSON at all. It becomes a `.txt` file holding your exact bytes, final newline and all:
+
+```text
+Order created
+Ready for dispatch — café ☕
+```
+
+### The same input always produces the same bytes
+
+Object keys are sorted, indentation is two spaces, every file ends with one `\n`, and numbers and dates are formatted invariantly. Declaration order and machine culture do not leak into the file:
+
+```csharp
+new { zebra = 1, apple = 2, Mango = 3, banana = 4 }.AssertSnapshot("sorted");
+```
+
+```json
+{
+  "Mango": 3,
+  "apple": 2,
+  "banana": 4,
+  "zebra": 1
+}
+```
+
+Sorting is ordinal, so uppercase letters sort first. The point is not the order itself but that it never changes between runs, machines or platforms: a diff appears only when a value actually changed.
+
+Comparison is structural rather than textual, so reordered properties or different whitespace in an application-supplied JSON document do not fail a test. And comparison never rewrites the file — `IgnoreStringCase` does not lowercase anything, `IgnoreArrayOrder` does not sort anything.
+
 ## The one rule
 
 **Snapshots are written only after the test method returns successfully.**
@@ -174,7 +295,7 @@ public sealed class ContractTests { /* ... */ }
 
 `all` deletes unused files only when it applies to a whole test (an attribute, the config file, or `IMPRINT_UPDATE`). A single `UpdateSnapshot()` call never deletes anything.
 
-A run-wide `verify` — `IMPRINT_UPDATE=verify`, or CI — means nothing on disk changes at all. An interrupted commit from an earlier run is reported rather than rolled back, so a verification run never modifies your working tree.
+A run-wide `verify` — `IMPRINT_UPDATE=verify`, or CI — prevents baseline changes. An interrupted baseline transaction from an earlier run is reported rather than recovered. Locks and failure diagnostics can still write.
 
 ### CI verifies by default
 
@@ -197,7 +318,7 @@ Both are read by the normal `dotnet test`. There is no separate Imprint command.
 
 ## API
 
-Four methods cover almost everything:
+Two entry points cover ordinary snapshot tests:
 
 ```csharp
 value.AssertSnapshot();                          // compare against the baseline
@@ -208,12 +329,14 @@ value.UpdateSnapshot("name");                    // overwrite this one baseline
 
 `AssertSnapshot` and `UpdateSnapshot` both take an optional explicit writer — see [What can be captured](#what-can-be-captured).
 
+See [docs/API.md](docs/API.md) for the full API overview, configuration layers, precedence, and reusable options.
+
 ### Per-capture options — `SnapshotOptions`
 
 ```csharp
 payload.AssertSnapshot("payload", new SnapshotOptions
 {
-    Format     = SnapshotFormat.Json,   // parse this string as JSON instead of storing it as text
+    Format     = SnapshotFormat.Json,   // JSON value; strings remain strings unless StringContent is Json
     Comparison = new SnapshotComparison { NumericTolerance = 0.001m },
     Comparer   = new MyComparer(),      // full control over equality
     Update     = SnapshotUpdate.All     // policy for this capture only
@@ -222,8 +345,10 @@ payload.AssertSnapshot("payload", new SnapshotOptions
 
 | Property     | Meaning                                                                                                                                                     |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Format`     | `Auto` (default): text for strings, JSON for everything else. `Json` parses a string as JSON. `Text` / `Snap` force text with a `.txt` / `.snap` extension. |
-| `Comparison` | Equality rules for this capture. Replaces the project rules wholesale.                                                                                      |
+| `Format`     | `Auto` (default): `.txt` for non-null root strings, `.json` for other supported values. `Json` writes a JSON value; `Text` requires a non-null string. |
+| `StringContent` | `Value` (default) captures the string itself. `Json` validates a supplied JSON document and preserves its text in `.json`; incompatible with Text or explicit writers. |
+| `Representation` | Enum, byte-array and dictionary preferences for the entire capture, inherited from project and test settings. |
+| `Comparison` | Per-field equality overrides. Unset fields inherit; explicit false or zero overrides a broader setting. |
 | `Comparer`   | Your own `ISnapshotComparer`. See [Volatile data](#volatile-data-timestamps-guids).                                                                         |
 | `Update`     | Update policy for this capture only.                                                                                                                        |
 
@@ -241,6 +366,19 @@ These decide when two snapshots count as equal. **They never change what is writ
 | `MaxUnorderedArrayLength`  | `256`   | Longest array `IgnoreArrayOrder` will try to match, to bound the cost.                       |
 
 `IgnoreArrayOrder` uses real multiset matching, not a greedy pass, so it stays correct when combined with `NumericTolerance`.
+
+Configuration resolves from built-in defaults through project, test and assertion settings. Before the first capture, ordinary tests can assign patches to `Snapshots.Current.Comparison`, `Snapshots.Current.Representation` and `Snapshots.Current.StringContent`. Later assignments fail. Explicit integrations use the corresponding `SnapshotTestOptions` properties. Custom comparers receive `ResolvedSnapshotComparison`, with non-nullable values for every rule.
+
+To capture your application's serializer output, pass its JSON string through the same assertion API:
+
+```csharp
+jsonFromYourApplication.AssertSnapshot("response", new()
+{
+    StringContent = SnapshotStringContent.Json
+});
+```
+
+This validates one JSON document, including scalar roots, without reformatting it. JSON equality ignores formatting and property order. Ordinary strings are never inspected to guess their content.
 
 ### Per-test settings — `[SnapshotSettings]`
 
@@ -279,7 +417,7 @@ Optional. Drop a `snapshots.config.json` in the test-project root. Every key has
 
 ```json
 {
-    "$schema": "https://raw.githubusercontent.com/TheLithium/TheLithium.Imprint/main/snapshots.schema.json",
+    "$schema": "https://raw.githubusercontent.com/TheLithium/TheLithium.Imprint/main/schemas/1.0.0/snapshots.schema.json",
     "version": 1,
 
     "update": "missing",
@@ -304,8 +442,7 @@ The full shape, with defaults:
     "files": {
         "snapshotFolderName": "__snapshots__",
         "snapshotRootPath": null,
-        "failureArtifactPath": "artifacts/imprint/failures",
-        "textFileExtension": "txt"
+        "failureArtifactPath": "artifacts/imprint/failures"
     },
 
     "naming": {
@@ -345,7 +482,6 @@ The full shape, with defaults:
 | `snapshotFolderName`  | Folder created next to your test sources to hold the snapshots.                                            |
 | `snapshotRootPath`    | Put snapshots somewhere else entirely. Project-relative or absolute. Replaces the source-adjacent default. |
 | `failureArtifactPath` | Where expected/received files go when a test fails. Must be outside the snapshot root.                     |
-| `textFileExtension`   | `txt` or `snap`, for text snapshots.                                                                       |
 
 **`naming`** — how folders and files get their names.
 
@@ -356,6 +492,10 @@ The full shape, with defaults:
 
 **`comparison`** — the same six rules as [`SnapshotComparison`](#equality-rules).
 
+**`stringContent`** — top-level `value` (default) or `json` for root strings. Override it per test or assertion when a project captures both kinds.
+
+**`representation`** — category defaults: `enums` (`name-or-number` / `number`), `byteArrays` (`numbers` / `base64`), and `dictionaries` (`automatic` / `entries`). Override individual categories for a test or assertion with `SnapshotRepresentationOptions`; all matching values in the capture use the same preference.
+
 **`limits`** — safety valves. Raise one only when a legitimate snapshot hits it.
 
 | Key                    | Meaning                                                                   |
@@ -365,22 +505,18 @@ The full shape, with defaults:
 | `maxBytesPerSnapshot`  | Largest single snapshot file, in UTF-8 bytes.                             |
 | `lockTimeoutSeconds`   | How long to wait for another process to release the snapshot folder lock. |
 
-Unknown keys, duplicate keys, and wrong types are errors, not warnings — a typo will not be silently ignored, and a key that moved or was renamed tells you its new spelling:
-
-```text
-Unknown configuration property: maxNodes. It is now "limits.maxValuesPerSnapshot".
-```
+Unknown keys, duplicate keys, wrong types and invalid limits are errors. Invalid project settings are rejected even when a test supplies a narrower override. Configuration uses the current names only; historical aliases are not supported.
 
 ### Editor support
 
-The keys above are described by [`snapshots.schema.json`](snapshots.schema.json), which ships inside the NuGet package and is published in this repository. A test keeps it in step with the reader, so it can never document a key that does not work or miss one that does.
+The keys above are described by [`schemas/1.0.0/snapshots.schema.json`](schemas/1.0.0/snapshots.schema.json), which ships inside the NuGet package and is published in this repository. A test keeps it in step with the reader, so it can never document a key that does not work or miss one that does.
 
 To get completion and hover documentation, point your config at it:
 
 | How                               | Setup                                                                                                                                   | Works offline                         |
 | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
 | **`$schema` URL** _(recommended)_ | Add the `$schema` line shown above.                                                                                                     | No — fetched and cached by the editor |
-| **`$schema` relative path**       | Copy `snapshots.schema.json` out of the package into your repo, then `"$schema": "./snapshots.schema.json"`.                            | Yes                                   |
+| **`$schema` relative path**       | Copy `schemas/1.0.0/snapshots.schema.json` out of the package into your repo, then `"$schema": "./schemas/1.0.0/snapshots.schema.json"`. | Yes                                   |
 | **VS Code workspace setting**     | Map the filename in `.vscode/settings.json` under `json.schemas`. Commit it, and everyone on the repo gets it without a `$schema` line. | With a local copy                     |
 
 A fourth option needs no setup at all: registering the schema with [SchemaStore](https://www.schemastore.org), whose catalog ships inside VS Code and Rider. Once `snapshots.config.json` is in that catalog, the filename alone is enough — no `$schema` line, nothing to configure. That is a pull request to the SchemaStore repository rather than a code change here, and the schema already carries the `$id` it needs.
@@ -459,7 +595,7 @@ public sealed class IgnoreTimestamps : ISnapshotComparer
         Regex.Replace(text, @"\d{4}-\d{2}-\d{2}T[\d:.]+Z", "<timestamp>");
 
     public SnapshotComparisonResult Compare(
-        string expected, string received, SnapshotFormat format, SnapshotComparison options)
+        string expected, string received, SnapshotFormat format, ResolvedSnapshotComparison options)
         => Scrub(expected) == Scrub(received)
             ? SnapshotComparisonResult.Match
             : new SnapshotComparisonResult(false, "Differs after ignoring timestamps.");
@@ -523,7 +659,7 @@ Parses [value=a, b=c~3d7e02f1ac88]         the value contains the label's own se
 Parses [first=aaaaaaaa…aaa~5b1c9e4470af]   the label was too long and had to be truncated
 ```
 
-If you see a hash, it is carrying real information. Otherwise the path stays short — which matters, because these files get committed. See [Path length](#path-length-is-yours-to-watch).
+If you see a hash, it is carrying real information. Otherwise the path stays short — which matters, because these files get committed. See [Path length](#path-length).
 
 The case identifies the _invocation_; the capture name identifies the _file_. If one invocation produces several logical outputs, name them:
 
@@ -545,9 +681,7 @@ foreach (var item in items)
 
 The runtime does no reflection: serializers are generated at compile time and registered by module initializers. The generator and MSBuild task run during the build and are not shipped into your app.
 
-Verified by publishing a test executable with `PublishAot=true`, `IlcTreatWarningsAsErrors=true`, and `ILLinkTreatWarningsAsErrors=true`, on Windows, Linux, and macOS.
-
-One caveat that is not about Imprint: your _test runner_ also has to support Native AOT. Runners that discover tests by reflection generally do not. For an AOT test project, drive the tests from a plain `Main` with an explicit list, which is what [`tests/TheLithium.Imprint.Specifications`](tests/TheLithium.Imprint.Specifications) does.
+CI checks a packaged test executable with `PublishAot=true`, `IlcTreatWarningsAsErrors=true`, and `ILLinkTreatWarningsAsErrors=true` on Windows, Linux, and macOS. The same specification harness also runs as ordinary managed .NET tests.
 
 ## Custom runners
 
@@ -580,7 +714,7 @@ catch (Exception error)
 
 `Snapshots.Run(...)` and `Snapshots.RunAsync(...)` wrap that pattern. `Dispose` without `Complete` abandons the scope and approves nothing.
 
-`SnapshotTestOptions` carries the settings a runner may need to override per test: `Name`, `Suite`, `Case`, `Variant`, `Identity`, `RootDirectory`, `ArtifactDirectory`, `ConfigurationFile`, `Comparison`, `Naming`, `AllowEmpty`, `MaxNestingDepth`, `MaxValuesPerSnapshot`, `MaxBytesPerSnapshot`, and `CancellationToken`. In an ordinary test method you use `[SnapshotSettings]` and the config file instead.
+`SnapshotTestOptions` carries the settings a runner may need to override per test: `Name`, `Suite`, `Case`, `Variant`, `Identity`, `RootDirectory`, `ArtifactDirectory`, `ConfigurationFile`, `Update`, `Comparison`, `Representation`, `StringContent`, `Naming`, `AllowEmpty`, `MaxNestingDepth`, `MaxValuesPerSnapshot`, `MaxBytesPerSnapshot`, and `CancellationToken`. In an ordinary test method you use `[SnapshotSettings]` and the config file instead.
 
 See [docs/FRAMEWORKS.md](docs/FRAMEWORKS.md).
 
@@ -696,6 +830,8 @@ Pruning helpers are an idea for now.
 
 The store coordinates cooperative local processes with locks, journals, and fingerprints. It does not claim distributed-filesystem transactions or protection against hostile concurrent edits.
 
+Baseline, failure-artifact and recovery directories must be separate: none may contain another. Imprint rejects existing symbolic links and reparse points at or below the project directory, and checks configured external paths from their filesystem root. Standard macOS system aliases are resolved for these checks. A diagnostic write failure never replaces the original test failure. It appears in `SnapshotReport.ArtifactError` and the mismatch message, or in the original exception's `Data["TheLithium.Imprint.ArtifactError"]` when a test aborts.
+
 ### Path length
 
 Imprint bounds every path _segment_, but the full path is your repository layout plus your suite, test, case, and capture names. .NET writes long paths happily; **git on Windows does not** unless `core.longpaths` is `true`. A path over ~260 characters can be written by a passing test and then silently skipped by `git add`, so CI sees a missing baseline that you cannot reproduce locally.
@@ -704,8 +840,8 @@ Keep names reasonable, or set `core.longpaths=true`. Imprint already helps by de
 
 ## More
 
+- [docs/API.md](docs/API.md) — test APIs and configuration organized by scope
 - [docs/FRAMEWORKS.md](docs/FRAMEWORKS.md) — per-framework notes and the explicit adapter boundary
 - [docs/TYPE-SUPPORT.md](docs/TYPE-SUPPORT.md) — the complete serialization contract
-- [docs/DESIGN.md](docs/DESIGN.md) — how the lifetime, generator, and transactional store work
-- [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) — building, testing, CI, and releases
-- [LICENSING.md](LICENSING.md)
+- [Maintainer documentation](.agents/memory/crystallized/documents/development.md) — building, testing, CI, releases, and internal architecture
+- [License](LICENSE) — MIT

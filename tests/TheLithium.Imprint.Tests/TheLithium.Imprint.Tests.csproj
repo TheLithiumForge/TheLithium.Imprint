@@ -5,6 +5,7 @@
   <ItemGroup>
     <!-- Opens explicit fixture lifetimes, so the build task must not wrap these methods too. -->
     <Compile Update="ConfigurationSchemaTests.cs" ImprintInstrument="false" />
+    <Compile Update="ConfigurationLayerTests.cs" ImprintInstrument="false" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />

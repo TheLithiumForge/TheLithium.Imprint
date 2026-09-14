@@ -1,17 +1,18 @@
 using System.Text.Json;
-using System.Text.RegularExpressions;
+
 using TheLithium.Imprint.Specifications;
 using Xunit;
 
 namespace TheLithium.Imprint.Tests;
 
 /// <summary>
-/// Keeps snapshots.schema.json and the configuration reader describing the same file.
+/// Keeps the versioned snapshots schema and the configuration reader describing the same file.
 /// The schema is what editors use for completion, so a drift between the two would
 /// silently offer keys that do not work, or hide keys that do.
 /// </summary>
 public sealed class ConfigurationSchemaTests : IDisposable
 {
+    private const string SchemaVersion = "1.0.0";
     private readonly Fixture _fixture = new();
     private readonly EnvironmentValue _ci = new("CI", "false");
     private readonly EnvironmentValue _update = new("IMPRINT_UPDATE", null);
@@ -19,57 +20,42 @@ public sealed class ConfigurationSchemaTests : IDisposable
     private static string RepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "snapshots.schema.json")))
+        while (directory is not null && !File.Exists(SchemaPath(directory.FullName)))
         {
             directory = directory.Parent;
         }
 
-        Assert.True(directory is not null, "snapshots.schema.json was not found above " + AppContext.BaseDirectory);
+        Assert.True(directory is not null, "schemas/" + SchemaVersion + "/snapshots.schema.json was not found above " + AppContext.BaseDirectory);
         return directory!.FullName;
     }
 
+    private static string SchemaPath(string repositoryRoot)
+        => Path.Combine(repositoryRoot, "schemas", SchemaVersion, "snapshots.schema.json");
+
     private static JsonDocument Schema()
-        => JsonDocument.Parse(File.ReadAllText(Path.Combine(RepositoryRoot(), "snapshots.schema.json")));
+        => JsonDocument.Parse(File.ReadAllText(SchemaPath(RepositoryRoot())));
 
-    private static string ReaderSource() => File.ReadAllText(Path.Combine(RepositoryRoot(),
-        "src", "TheLithium.Imprint.Core", "Configuration", "ProjectConfigurationReader.cs"));
-
-    /// <summary>Every "key" arm that dispatches on a property name, as group.key or key.</summary>
+    /// <summary>Read the generated JSON contract, not C# source text or a second property inventory.</summary>
     private static SortedSet<string> ReaderKeys()
     {
-        var source = ReaderSource();
+        var context = TheLithium.Imprint.Configuration.ProjectConfigurationJsonContext.Instance;
         var keys = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var (method, group) in new[]
+        Collect(context.ProjectConfigurationFile, string.Empty);
+        return keys;
+
+        void Collect(System.Text.Json.Serialization.Metadata.JsonTypeInfo contract, string prefix)
         {
-            ("Read", ""), ("ReadFiles", "files."), ("ReadNaming", "naming."),
-            ("ReadLimits", "limits."), ("ReadComparison", "comparison.")
-        })
-        {
-            var body = MethodBody(source, method);
-            // Property arms assign into the config/options record or delegate to a group reader.
-            // Value arms (for example "snap" => SnapshotFormat.Snap) deliberately do not match.
-            foreach (Match match in Regex.Matches(body,
-                @"""(\$?\w+)""\s*(?:when.*?)?=>\s*(config|options|Read[A-Za-z]+\()"))
+            foreach (var property in contract.Properties)
             {
-                keys.Add(group + match.Groups[1].Value);
+                var name = prefix + property.Name;
+                keys.Add(name);
+                if (context.GetTypeInfo(property.PropertyType) is { Kind: System.Text.Json.Serialization.Metadata.JsonTypeInfoKind.Object } child)
+                {
+                    Collect(child, name + ".");
+                }
             }
         }
-
-        return keys;
     }
-
-    private static string MethodBody(string source, string name)
-    {
-        // Anchor on the declaration, not a call site: ReadComparison( also appears inside Read.
-        var declaration = Regex.Match(source, @"(internal|private) static \w+ " + name + @"\(");
-        Assert.True(declaration.Success, "Reader method not found: " + name);
-        var start = declaration.Index;
-        // Each group reader is followed by the next member declaration; a bounded window is enough
-        // to cover one switch and keeps this test from needing a full C# parser.
-        var end = source.IndexOf("\n    private static ", start + 1, StringComparison.Ordinal);
-        return end < 0 ? source[start..] : source[start..end];
-    }
-
     /// <summary>Schema leaves as group.key or key, so a key in the wrong group is a failure.</summary>
     private static SortedSet<string> SchemaKeys()
     {

@@ -8,15 +8,33 @@ internal static class SnapshotEncoding
 {
     internal static readonly UTF8Encoding Utf8 = new(false, true);
 
-    internal static (string Text, SnapshotFormat Format) Encode<T>(T value, SnapshotFormat format,
-        SnapshotWriter<T>? writer, EffectiveSettings settings)
+    internal static (string Text, SnapshotFormat Format) Encode<T>(T value, SnapshotWriter<T>? writer,
+        EffectiveSettings settings, CaptureRepresentation representation)
     {
+        var format = representation.Format;
+        if (representation.StringContent == SnapshotStringContent.Json)
+        {
+            if (value is not string supplied || writer is not null || format is not (SnapshotFormat.Auto or SnapshotFormat.Json))
+            {
+                throw new SnapshotConfigurationException("JSON string content requires a non-null string, Auto/Json format and no explicit writer.");
+            }
+            EnsureSize(supplied, settings.MaxBytesPerSnapshot);
+            try
+            {
+                using var document = StrictJson.Parse(supplied, settings.MaxNestingDepth, settings.Cancellation, settings.MaxValuesPerSnapshot);
+                return (supplied, SnapshotFormat.Json);
+            }
+            catch (JsonException error)
+            {
+                throw new SnapshotCaptureException($"Invalid supplied JSON: {error.Message}", error);
+            }
+        }
         if (format == SnapshotFormat.Auto)
         {
-            format = value is string && writer is null ? settings.TextFormat : SnapshotFormat.Json;
+            format = value is string && writer is null ? SnapshotFormat.Text : SnapshotFormat.Json;
         }
 
-        if (format is SnapshotFormat.Snap or SnapshotFormat.Text)
+        if (format == SnapshotFormat.Text)
         {
             if (value is not string text)
             {
@@ -32,20 +50,15 @@ internal static class SnapshotEncoding
         }
 
         string json;
-        if (value is string rawJson && writer is null)
-        {
-            EnsureSize(rawJson, settings.MaxBytesPerSnapshot);
-            json = rawJson;
-        }
-        else
         {
             using var stream = new SizeLimitedStream(settings.MaxBytesPerSnapshot);
             using (var output = new Utf8JsonWriter(stream, new JsonWriterOptions
             {
-                Encoder = JavaScriptEncoder.Default
+                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
             }))
             {
-                var context = new SnapshotWriteContext(settings.MaxNestingDepth, settings.MaxValuesPerSnapshot, settings.Cancellation);
+                var context = new SnapshotWriteContext(settings.MaxNestingDepth, settings.MaxValuesPerSnapshot,
+                    settings.Cancellation, representation.Options);
                 if (writer is null)
                 {
                     SnapshotWriters.Write(output, value, context);
@@ -66,43 +79,54 @@ internal static class SnapshotEncoding
             }
             json = Utf8.GetString(stream.ToArray());
         }
-        return (CanonicalJson(json, settings.MaxNestingDepth, settings.MaxBytesPerSnapshot), SnapshotFormat.Json);
+        try
+        {
+            return (CanonicalJson(json, settings.MaxNestingDepth, settings.MaxBytesPerSnapshot,
+                settings.MaxValuesPerSnapshot, settings.Cancellation), SnapshotFormat.Json);
+        }
+        catch (JsonException error)
+        {
+            throw new SnapshotCaptureException($"Invalid JSON snapshot: {error.Message}", error);
+        }
     }
 
-    internal static string CanonicalJson(string json, int maxDepth, int maxBytes)
+    internal static string CanonicalJson(string json, int maxDepth, int maxBytes,
+        int maxNodes = SnapshotLimits.DefaultNodes, CancellationToken cancellation = default)
     {
-        using var document = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = maxDepth });
+        EnsureSize(json, maxBytes);
+        using var document = StrictJson.Parse(json, maxDepth, cancellation, maxNodes);
+        return FormatDocument(document.RootElement, maxBytes, cancellation);
+    }
+
+    internal static string FormatDocument(JsonElement value, int maxBytes, CancellationToken cancellation)
+    {
         using var stream = new SizeLimitedStream(maxBytes);
         using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions
         {
-            Indented = true
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            Indented = true,
+            NewLine = "\n"
         }))
         {
-            WriteCanonical(writer, document.RootElement);
+            WriteCanonical(writer, value, cancellation);
             writer.Flush();
         }
-        var result = Utf8.GetString(stream.ToArray()).Replace("\r\n", "\n") + "\n";
-        EnsureSize(result, maxBytes);
-        return result;
+        stream.WriteByte((byte)'\n');
+        cancellation.ThrowIfCancellationRequested();
+        return Utf8.GetString(stream.ToArray());
     }
 
-    private static void WriteCanonical(Utf8JsonWriter writer, JsonElement value)
+    private static void WriteCanonical(Utf8JsonWriter writer, JsonElement value, CancellationToken cancellation)
     {
+        cancellation.ThrowIfCancellationRequested();
         switch (value.ValueKind)
         {
             case JsonValueKind.Object:
                 writer.WriteStartObject();
-                string? previous = null;
                 foreach (var property in value.EnumerateObject().OrderBy(x => x.Name, StringComparer.Ordinal))
                 {
-                    if (property.Name == previous)
-                    {
-                        throw new SnapshotCaptureException("JSON contains a duplicate property: " + property.Name);
-                    }
-
-                    previous = property.Name;
                     writer.WritePropertyName(property.Name);
-                    WriteCanonical(writer, property.Value);
+                    WriteCanonical(writer, property.Value, cancellation);
                 }
                 writer.WriteEndObject();
                 break;
@@ -110,7 +134,7 @@ internal static class SnapshotEncoding
                 writer.WriteStartArray();
                 foreach (var element in value.EnumerateArray())
                 {
-                    WriteCanonical(writer, element);
+                    WriteCanonical(writer, element, cancellation);
                 }
 
                 writer.WriteEndArray();
