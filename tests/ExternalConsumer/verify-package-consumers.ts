@@ -28,6 +28,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { appendWindowsPath } from "./environment.ts";
 
 const TEMPLATE_EXTENSIONS = new Set([".cs", ".csproj", ".props", ".targets"]);
 const FRAMEWORK_PROJECTS = ["Xunit", "NUnit", "MSTest"];
@@ -329,9 +330,7 @@ function main(): void {
   // Native AOT linking on Windows needs the Visual Studio toolchain on PATH.
   if (process.platform === "win32") {
     const installer = "C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer";
-    if (existsSync(installer) && !env.PATH?.includes(installer)) {
-      env.PATH = `${env.PATH};${installer}`;
-    }
+    if (existsSync(installer)) appendWindowsPath(env, installer);
   }
 
   const context = { output, logs, env, runtime: runtimeIdentifier() };

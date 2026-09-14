@@ -7,7 +7,9 @@ dotnet pack TheLithium.Imprint.slnx -c Release
 node tests/ExternalConsumer/verify-package-consumers.ts
 ```
 
-One script covers Windows, Linux and macOS. It needs the .NET SDK selected by global.json and Node 22.6 or later, which runs TypeScript directly, so there is nothing to compile or install. Native AOT additionally requires the platform's native compiler and linker; on Windows the runner adds the Visual Studio C++ tools to `PATH` itself if they are present.
+One script covers Windows, Linux and macOS. It needs the .NET SDK selected by global.json and Node 24, which runs TypeScript directly, so there is nothing to compile or install. Native AOT additionally requires the platform's native compiler and linker; on Windows the runner adds the Visual Studio Installer discovery directory if present, preserving the inherited SDK search path regardless of whether Windows names it `Path` or `PATH`. The Visual Studio C++ build tools must already be installed.
+
+Run the environment regression checks with `node --test tests/ExternalConsumer/environment.test.ts`. On Windows this includes launching `dotnet` from a temporary directory with a mixed-case `Path` environment. The managed CI matrix runs these alongside the release-script tests.
 
 | Option | Flag |
 | --- | --- |

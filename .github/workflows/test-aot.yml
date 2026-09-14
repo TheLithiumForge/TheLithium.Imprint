@@ -1,0 +1,105 @@
+name: Test AOT
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-aot-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_NOLOGO: true
+  NUGET_XMLDOC_MODE: skip
+
+jobs:
+  aot:
+    name: Native AOT validation (with managed package preflight) (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+            executable: TheLithium.Imprint.Specifications.exe
+          - os: ubuntu-latest
+            rid: linux-x64
+            executable: TheLithium.Imprint.Specifications
+          - os: macos-latest
+            rid: osx-arm64
+            executable: TheLithium.Imprint.Specifications
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Restore
+        run: dotnet restore TheLithium.Imprint.slnx --force-evaluate
+      - name: Build package inputs (managed / non-Native AOT)
+        run: dotnet build TheLithium.Imprint.slnx -c Release --no-restore
+      - name: Pack local feed
+        run: dotnet pack TheLithium.Imprint.slnx -c Release --no-build --no-restore
+      - name: Verify independent external consumers (managed and Native AOT)
+        run: >-
+          node tests/ExternalConsumer/verify-package-consumers.ts
+          --output-root '${{ runner.temp }}/imprint-external-consumer'
+      - name: Restore package consumers
+        run: dotnet restore TheLithium.Imprint.slnx -p:UsePackageReferences=true -p:RestorePackagesPath=artifacts/nuget/package-consumer --force-evaluate
+      - name: Test packaged consumers (managed / non-Native AOT)
+        run: >-
+          dotnet test TheLithium.Imprint.slnx
+          -c Release
+          -p:UsePackageReferences=true
+          -p:RestorePackagesPath=artifacts/nuget/package-consumer
+          --no-restore
+          --logger trx
+          --results-directory artifacts/package-test-results
+      - name: Test packaged executable specifications (managed / non-Native AOT)
+        run: >-
+          dotnet run
+          --project tests/TheLithium.Imprint.Specifications
+          -c Release
+          -p:UsePackageReferences=true
+          -p:RestorePackagesPath=artifacts/nuget/package-consumer
+          --no-build
+          --no-restore
+          --
+          --expect-managed
+      - name: Build package consumer (Native AOT)
+        run: >-
+          dotnet publish tests/TheLithium.Imprint.Specifications
+          -c Release
+          -r ${{ matrix.rid }}
+          -p:UsePackageReferences=true
+          -p:RestorePackagesPath=artifacts/nuget/package-consumer
+          -p:PublishAot=true
+          -p:SelfContained=true
+          -p:IlcTreatWarningsAsErrors=true
+          -p:ILLinkTreatWarningsAsErrors=true
+          -o artifacts/native/${{ matrix.rid }}
+      - name: Test executable specifications (Native AOT)
+        run: ./artifacts/native/${{ matrix.rid }}/${{ matrix.executable }} --expect-aot
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-${{ matrix.rid }}
+          path: |
+            artifacts/test-results
+            artifacts/package-test-results
+            artifacts/packages
+            ${{ runner.temp }}/imprint-external-consumer/logs
+            ${{ runner.temp }}/imprint-external-consumer/package-hashes.json

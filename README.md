@@ -1,8 +1,11 @@
 # TheLithium.Imprint
 
-[![Build and test](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml/badge.svg)](https://github.com/TheLithium/TheLithium.Imprint/actions/workflows/build-test.yml)
-[![NuGet](https://img.shields.io/nuget/vpre/TheLithium.Imprint?logo=nuget&label=NuGet)](https://www.nuget.org/packages/TheLithium.Imprint)
+[![Build](https://img.shields.io/github/actions/workflow/status/TheLithiumForge/TheLithium.Imprint/build.yml?branch=main&event=push&label=build)](https://github.com/TheLithiumForge/TheLithium.Imprint/actions/workflows/build.yml?query=branch%3Amain)
+[![Test](https://img.shields.io/github/actions/workflow/status/TheLithiumForge/TheLithium.Imprint/test.yml?branch=main&event=push&label=test)](https://github.com/TheLithiumForge/TheLithium.Imprint/actions/workflows/test.yml?query=branch%3Amain)
+[![Test AOT](https://img.shields.io/github/actions/workflow/status/TheLithiumForge/TheLithium.Imprint/test-aot.yml?branch=main&event=push&label=test%20AOT)](https://github.com/TheLithiumForge/TheLithium.Imprint/actions/workflows/test-aot.yml?query=branch%3Amain)
+[![NuGet releases](https://img.shields.io/badge/NuGet-releases-004880?logo=nuget&logoColor=white)](https://github.com/TheLithiumForge/TheLithium.Imprint/releases)
 [![.NET 10](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/download/dotnet/10.0)
+[![.NET 11 preview](https://img.shields.io/badge/.NET-11%20preview-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/download/dotnet/11.0)
 
 Imprint is a snapshot testing library for C# that keeps snapshots readable and easy to review. It generates snapshot writers at compile time and works with both ordinary .NET tests and Native AOT. Add `.AssertSnapshot()` to a value in a test you already have.
 
@@ -131,38 +134,35 @@ new
 
 ```json
 {
-  "Big": 9223372036854775807,
-  "ByCountry": {
-    "BE": 1,
-    "NL": 2
-  },
-  "Day": "2026-03-09",
-  "Elapsed": "01:33:00",
-  "Id": "6f9619ff-8b86-d011-b42d-00cf4fc964ff",
-  "Missing": null,
-  "Placed": "2026-03-09T14:05:00.0000000Z",
-  "Ratio": 0.30000000000000004,
-  "Status": "Shipped",
-  "Tags": [
-    "keyboard",
-    "cable"
-  ],
-  "Total": 42.50,
-  "Where": "https://example.com/orders?id=1&x=2"
+    "Big": 9223372036854775807,
+    "ByCountry": {
+        "BE": 1,
+        "NL": 2
+    },
+    "Day": "2026-03-09",
+    "Elapsed": "01:33:00",
+    "Id": "6f9619ff-8b86-d011-b42d-00cf4fc964ff",
+    "Missing": null,
+    "Placed": "2026-03-09T14:05:00.0000000Z",
+    "Ratio": 0.30000000000000004,
+    "Status": "Shipped",
+    "Tags": ["keyboard", "cable"],
+    "Total": 42.5,
+    "Where": "https://example.com/orders?id=1&x=2"
 }
 ```
 
 A few details from that output.
 
-| Output | Why it matters |
-| --- | --- |
-| `"Status": "Shipped"` | Enums use their declared name, not `1`. A value with no exact declared name, such as a combined `[Flags]` value, falls back to the number. |
-| `"Placed": "2026-03-09T14:05:00.0000000Z"` | Dates are round-trippable ISO 8601, formatted invariantly. A machine in another culture produces the same bytes. |
-| `"Total": 42.50` | `decimal` keeps its scale. `42.50m` does not quietly become `42.5`. |
-| `"Ratio": 0.30000000000000004` | `double` is written exactly, so floating-point drift shows up in the diff instead of being rounded away. [`NumericTolerance`](#equality-rules) is there when you would rather ignore it. |
-| `"Big": 9223372036854775807` | Large integers stay exact. No `9.2E+18`. |
-| `"ByCountry": { "BE": 1, ... }` | String-keyed dictionaries are objects, not arrays of key/value pairs. |
-| `"Where": "https://...?id=1&x=2"` | A `Uri` keeps its original string, `&` included. |
+| Output                                     | Why it matters                                                                                                                                                                           |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"Status": "Shipped"`                      | Enums use their declared name, not `1`. A value with no exact declared name, such as a combined `[Flags]` value, falls back to the number.                                               |
+| `"Placed": "2026-03-09T14:05:00.0000000Z"` | Dates are round-trippable ISO 8601, formatted invariantly. A machine in another culture produces the same bytes.                                                                         |
+| `"Total": 42.50`                           | `decimal` keeps its scale. `42.50m` does not quietly become `42.5`.                                                                                                                      |
+| `"Ratio": 0.30000000000000004`             | `double` is written exactly, so floating-point drift shows up in the diff instead of being rounded away. [`NumericTolerance`](#equality-rules) is there when you would rather ignore it. |
+| `"Big": 9223372036854775807`               | Large integers stay exact. No `9.2E+18`.                                                                                                                                                 |
+| `"ByCountry": { "BE": 1, ... }`            | String-keyed dictionaries are objects, not arrays of key/value pairs.                                                                                                                    |
+| `"Where": "https://...?id=1&x=2"`          | A `Uri` keeps its original string, `&` included.                                                                                                                                         |
 
 Enums, byte arrays and dictionaries each have a second rendering if you prefer it. See [representation choices](docs/TYPE-SUPPORT.md#representation-choices).
 
@@ -182,12 +182,12 @@ new
 
 ```json
 {
-  "Accented": "café — naïve",
-  "Apostrophe": "it's fine",
-  "Japanese": "注文が完了しました",
-  "Markup": "<b>bold</b> & \"quoted\"",
-  "Path": "C:\\temp\\file.txt",
-  "Tabbed": "a\tb"
+    "Accented": "café — naïve",
+    "Apostrophe": "it's fine",
+    "Japanese": "注文が完了しました",
+    "Markup": "<b>bold</b> & \"quoted\"",
+    "Path": "C:\\temp\\file.txt",
+    "Tabbed": "a\tb"
 }
 ```
 
@@ -214,10 +214,10 @@ new { zebra = 1, apple = 2, Mango = 3, banana = 4 }.AssertSnapshot("sorted");
 
 ```json
 {
-  "Mango": 3,
-  "apple": 2,
-  "banana": 4,
-  "zebra": 1
+    "Mango": 3,
+    "apple": 2,
+    "banana": 4,
+    "zebra": 1
 }
 ```
 
@@ -307,10 +307,10 @@ To update from CI on purpose, set `IMPRINT_UPDATE` for that run. An explicit req
 
 Almost everything is configured through the typed API (`[SnapshotSettings]`, `SnapshotOptions`, and `snapshots.config.json`). Two things cannot be, so they are read from the environment.
 
-| Variable               | Why it is not a typed setting                                                                                                                                                                                                                                                                        |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Variable               | Why it is not a typed setting                                                                                                                                                                                                                                                                               |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `IMPRINT_UPDATE`       | `verify`, `missing`, or `all` for one run. Approving a change must not require editing and then reverting a committed file, because forgetting to revert `"update": "all"` silently disables your whole suite. Imprint has no runner adapter, so no command-line flag or `.runsettings` value can reach it. |
-| `IMPRINT_PROJECT_ROOT` | The project path is baked in at compile time. This repoints it when the tests run somewhere else than they were built, for example building in one container and testing in another. It describes the environment, not a policy.                                                                   |
+| `IMPRINT_PROJECT_ROOT` | The project path is baked in at compile time. This repoints it when the tests run somewhere else than they were built, for example building in one container and testing in another. It describes the environment, not a policy.                                                                            |
 
 `CI` is also read, but it is set by your CI provider, not by you.
 
@@ -343,14 +343,14 @@ payload.AssertSnapshot("payload", new SnapshotOptions
 });
 ```
 
-| Property     | Meaning                                                                                                                                                     |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Format`     | `Auto` (default): `.txt` for non-null root strings, `.json` for other supported values. `Json` writes a JSON value; `Text` requires a non-null string. |
-| `StringContent` | `Value` (default) captures the string itself. `Json` validates a supplied JSON document and preserves its text in `.json`; incompatible with Text or explicit writers. |
-| `Representation` | Enum, byte-array and dictionary preferences for the entire capture, inherited from project and test settings. |
-| `Comparison` | Per-field equality overrides. Unset fields inherit; explicit false or zero overrides a broader setting. |
-| `Comparer`   | Your own `ISnapshotComparer`. See [Volatile data](#volatile-data-timestamps-guids).                                                                         |
-| `Update`     | Update policy for this capture only.                                                                                                                        |
+| Property         | Meaning                                                                                                                                                                |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Format`         | `Auto` (default): `.txt` for non-null root strings, `.json` for other supported values. `Json` writes a JSON value; `Text` requires a non-null string.                 |
+| `StringContent`  | `Value` (default) captures the string itself. `Json` validates a supplied JSON document and preserves its text in `.json`; incompatible with Text or explicit writers. |
+| `Representation` | Enum, byte-array and dictionary preferences for the entire capture, inherited from project and test settings.                                                          |
+| `Comparison`     | Per-field equality overrides. Unset fields inherit; explicit false or zero overrides a broader setting.                                                                |
+| `Comparer`       | Your own `ISnapshotComparer`. See [Volatile data](#volatile-data-timestamps-guids).                                                                                    |
+| `Update`         | Update policy for this capture only.                                                                                                                                   |
 
 ### Equality rules
 
@@ -388,9 +388,9 @@ On a method or a class. A method wins over its class.
 [SnapshotSettings(Update = SnapshotUpdate.All, Name = "Contract")]
 ```
 
-| Property | Meaning                                                                                          |
-| -------- | ------------------------------------------------------------------------------------------------ |
-| `Update` | Update policy for this test or every test in the class.                                          |
+| Property | Meaning                                                                                         |
+| -------- | ----------------------------------------------------------------------------------------------- |
+| `Update` | Update policy for this test or every test in the class.                                         |
 | `Name`   | Folder name. The test folder on a method, the suite folder on a class. Defaults to the C# name. |
 
 ### Reading the result
@@ -513,11 +513,11 @@ The keys above are described by [`schemas/1.0.0/snapshots.schema.json`](schemas/
 
 To get completion and hover documentation, point your config at it:
 
-| How                               | Setup                                                                                                                                   | Works offline                         |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
-| **`$schema` URL** _(recommended)_ | Add the `$schema` line shown above.                                                                                                     | No, fetched and cached by the editor  |
-| **`$schema` relative path**       | Copy `schemas/1.0.0/snapshots.schema.json` out of the package into your repo, then `"$schema": "./schemas/1.0.0/snapshots.schema.json"`. | Yes                                   |
-| **VS Code workspace setting**     | Map the filename in `.vscode/settings.json` under `json.schemas`. Commit it, and everyone on the repo gets it without a `$schema` line. | With a local copy                     |
+| How                               | Setup                                                                                                                                    | Works offline                        |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| **`$schema` URL** _(recommended)_ | Add the `$schema` line shown above.                                                                                                      | No, fetched and cached by the editor |
+| **`$schema` relative path**       | Copy `schemas/1.0.0/snapshots.schema.json` out of the package into your repo, then `"$schema": "./schemas/1.0.0/snapshots.schema.json"`. | Yes                                  |
+| **VS Code workspace setting**     | Map the filename in `.vscode/settings.json` under `json.schemas`. Commit it, and everyone on the repo gets it without a `$schema` line.  | With a local copy                    |
 
 A fourth option needs no setup at all: registering the schema with [SchemaStore](https://www.schemastore.org), whose catalog ships inside VS Code and Rider. Once `snapshots.config.json` is in that catalog, the filename alone is enough, with no `$schema` line and nothing to configure. That is a pull request to the SchemaStore repository rather than a code change here, and the schema already carries the `$id` it needs.
 
