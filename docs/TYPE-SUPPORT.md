@@ -6,7 +6,7 @@ The complete contract. The [README](../README.md) has the short version.
 
 ```csharp
 Animal pet = new Dog { Name = "Rex", GoodBoy = true };
-pet.AssertSnapshot();     // → { "Name": "Rex" }   — Dog.GoodBoy is not captured
+pet.AssertSnapshot();     // → { "Name": "Rex" }, Dog.GoodBoy is not captured
 ```
 
 Unsupported visible call sites produce the compile-time warning **IMP001**. A missing writer still fails capture at runtime; generic helper roots can be declared with `SnapshotInclude<T>`.
@@ -31,11 +31,11 @@ Details:
 | Supported                                                      | Notes                                                                                                                          |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | Public readable instance properties and public instance fields | Of accessible user types. Types need not be `partial` or carry any attribute.                                                  |
-| Records, classes, structs, DTOs                                | —                                                                                                                              |
+| Records, classes, structs, DTOs                                |                                                                                                                                |
 | Anonymous types                                                | Property order is preserved while inferring the shape; output keys are sorted like everything else.                            |
 | Enums                                                          | Declared name when it matches exactly, otherwise the numeric value; optionally always numeric. Flags combinations are not expanded. |
-| Nullable values                                                | —                                                                                                                              |
-| Tuples, `KeyValuePair`                                         | Tuple members are `Item1`, `Item2`, … — caller-local element names are not visible to the generator.                           |
+| Nullable values                                                |                                                                                                                                |
+| Tuples, `KeyValuePair`                                         | Tuple members are `Item1`, `Item2`, and so on. Caller-local element names are not visible to the generator.                    |
 | Arrays of rank 1, 2, or 3                                      | As nested JSON arrays. Nonzero-based arrays need a custom writer.                                                              |
 | A single unambiguous `IEnumerable<T>`                          | Enumeration order is preserved. Iteration must be finite. Sets are **not** sorted for you.                                     |
 | String-keyed dictionaries                                      | JSON objects by default; optionally arrays of Key/Value entries. |
@@ -82,7 +82,7 @@ These produce IMP001 and need an explicit writer or a projection:
 
 ## Escape hatches
 
-**Per call — an explicit writer.** The usual answer. No diagnostic is raised, because you have taken responsibility for the type:
+**Per call, an explicit writer.** The usual answer. No diagnostic is raised, because you have taken responsibility for the type:
 
 ```csharp
 value.AssertSnapshot(
@@ -98,7 +98,7 @@ value.AssertSnapshot(
 
 The delegate must write exactly one JSON value and leave the writer open. A `null` value writes JSON `null` without calling it.
 
-**Rooting a type the generator never sees directly** — typically a concrete type only reached through a generic helper:
+**Rooting a type the generator never sees directly**, typically a concrete type only reached through a generic helper:
 
 ```csharp
 [assembly: SnapshotInclude<MyType>]
@@ -110,14 +110,14 @@ The delegate must write exactly one JSON value and leave the writer open. A `nul
 SnapshotWriters.Register<MyType>(MyWriter);
 ```
 
-Register before any test concurrency starts. The generator does not analyze startup code, so it cannot infer that you did this — a type registered this way and not otherwise supported will still raise IMP001 at its call sites.
+Register before any test concurrency starts. The generator does not analyze startup code, so it cannot infer that you did this. A type registered this way and not otherwise supported will still raise IMP001 at its call sites.
 
 ## Safety and limits
 
-Capture is eager: it completes before `AssertSnapshot` returns, so mutating the object afterwards cannot change what was captured.
+Capture is eager. It completes before `AssertSnapshot` returns, so mutating the object afterwards cannot change what was captured.
 
 - **Reference cycles fail**, with the member path that closed the loop. Shared references that are not cycles are fine.
-- **A throwing getter fails the capture** and poisons the scope — even if the caller catches that exception, the test cannot go on to approve anything.
+- **A throwing getter fails the capture** and poisons the scope. Even if the caller catches that exception, the test cannot go on to approve anything.
 
 Defaults, and where to change them:
 
@@ -126,8 +126,8 @@ Defaults, and where to change them:
 | Nesting depth              | 64                                        | `limits.maxNestingDepth`             |
 | Values visited per capture | 100,000                                   | `limits.maxValuesPerSnapshot`        |
 | Bytes per snapshot file    | 4 MiB                                     | `limits.maxBytesPerSnapshot`         |
-| Captures per test          | 1,024                                     | —                                    |
-| Total bytes per test       | 128 MiB, or the per-file budget if larger | —                                    |
+| Captures per test          | 1,024                                     | None                                 |
+| Total bytes per test       | 128 MiB, or the per-file budget if larger | None                                 |
 | Unordered array length     | 256                                       | `comparison.maxUnorderedArrayLength` |
 
 Every JSON capture is bounded by emitted node count, parsed depth and UTF-8 bytes, including raw JSON, `JsonDocument`/`JsonElement` and custom-writer output. Each object, array and scalar counts as one emitted node; property names do not count separately. Generated writers also keep an independent traversal counter to stop runaway graphs early. The two counters use the same configured limit and are not added together. Custom writer/getter execution remains trusted; cancellation is checked before and after it and during Imprint's own traversal, but cannot interrupt arbitrary user code.
@@ -160,7 +160,7 @@ Snapshots are read by people, so the default rendering favours the form you woul
 | Nullable with no value | `null` | |
 | String-keyed dictionary | `{ "BE": 1, "NL": 2 }` | Object, keys sorted. Other key types become entry arrays. |
 | Tuple | `{ "Item1": 3, "Item2": "boxes" }` | Element names are a caller-side alias and are not visible to the generator. |
-| `byte[]` | `[1, 2, 3]` | Or a base64 string — see [representation choices](#representation-choices). |
+| `byte[]` | `[1, 2, 3]` | Or a base64 string. See [representation choices](#representation-choices). |
 
 `NaN` and infinity have no JSON number form, so they fail rather than acquiring an undocumented encoding.
 
@@ -170,10 +170,10 @@ JSON output escapes only what the format requires, so reviewers see text rather 
 
 | | |
 | --- | --- |
-| **Written literally** | Accented Latin, CJK, Cyrillic, Arabic, Greek, Hebrew, and symbols such as `☕` — anything in the Basic Multilingual Plane. Also `<`, `>`, `&`, `'` and `+`, which many JSON writers escape by default to make output safe to embed in HTML. That protection buys nothing for a file on disk and makes review painful. |
-| **Escaped** | `"` as `\"`, `\` as `\\`, and control characters — tab as `\t`, newline as `\n`, and the rest as `\u00XX`. |
-| **Escaped as surrogate pairs** | Characters above the Basic Multilingual Plane, which in practice means emoji: `"📦"` is stored as `"\uD83D\uDCE6"`. This is `Utf8JsonWriter` behaviour and Imprint does not override it. |
+| **Written literally** | Accented Latin, CJK, Cyrillic, Arabic, Greek, Hebrew, and symbols such as `☕`, meaning anything in the Basic Multilingual Plane. Also `<`, `>`, `&`, `'` and `+`, which many JSON writers escape by default to make output safe to embed in HTML. That protection is useless for a file on disk and makes review painful. |
+| **Escaped** | `"` as `\"`, `\` as `\\`, and control characters, with tab as `\t`, newline as `\n`, and the rest as `\u00XX`. |
+| **Escaped as surrogate pairs** | Characters above the Basic Multilingual Plane, which in practice means emoji. `"📦"` is stored as `"\uD83D\uDCE6"`. This is `Utf8JsonWriter` behaviour and Imprint does not override it. |
 
 Escaping is never lossy in either direction. A Windows path keeps its backslashes (`"C:\\temp\\file.txt"` reads back as `C:\temp\file.txt`), and a real tab stays distinct from the two characters `\` and `t`. The round trip is covered by `JsonSnapshotsKeepReadableTextAndRoundTripEscapedCharacters` and by the independent package consumer, which assert both the readable form and lossless recovery of the same string.
 
-Text snapshots are not JSON and are never escaped at all — a `.txt` file holds exactly the bytes you captured.
+Text snapshots are not JSON and are never escaped at all. A `.txt` file holds exactly the bytes you captured.

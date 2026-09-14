@@ -36,7 +36,7 @@ public void CreatesOrder()
 }
 ```
 
-Capture is eager: changing `order` afterwards does not change its captured value. Comparison and approval happen after the method body, including its awaited work and `finally` blocks, succeeds. A later failure abandons all proposed updates. Framework teardown after the method returns is outside that boundary. Catching a capture failure does not make the test eligible to approve snapshots.
+Capture is eager. Changing `order` afterwards does not change its captured value. Comparison and approval happen after the method body, including its awaited work and `finally` blocks, succeeds. A later failure abandons all proposed updates. Framework teardown after the method returns is outside that boundary. Catching a capture failure does not make the test eligible to approve snapshots.
 
 Names identify files within one test invocation. Supply names without extensions; Imprint chooses `.json` or `.txt`. Without an explicit name, the default is a variable/member name, then `snapshot-1`, `snapshot-2`, and so on. Explicit names must be unique within the test, ignoring case.
 
@@ -59,7 +59,7 @@ Changing a parameterized row leaves its old test folder behind; Imprint does not
 
 ## Configuration APIs
 
-### Layers at a glance
+### The configuration layers
 
 | Layer | Surface | Applies to |
 | --- | --- | --- |
@@ -71,7 +71,7 @@ Changing a parameterized row leaves its old test folder behind; Imprint does not
 | Assertion | `SnapshotOptions` passed to a capture | That capture and its nested values. |
 | Run environment | `IMPRINT_UPDATE`, `CI`, `IMPRINT_PROJECT_ROOT` | Update-policy enforcement or checkout relocation for the run. |
 
-The layers do not all expose the same settings. In particular, attributes only have `Name` and `Update`; `Format` and custom `Comparer` belong to individual assertions. A shared C# options variable has no scope by itself: it takes effect where it is passed or assigned.
+The layers do not all expose the same settings. In particular, attributes only have `Name` and `Update`; `Format` and custom `Comparer` belong to individual assertions. A shared C# options variable has no scope by itself. It takes effect where it is passed or assigned.
 
 For representation and comparison, specified fields override earlier values in this order:
 
@@ -143,7 +143,7 @@ Imprint reads one file at the resolved project root. It does not walk directorie
 | `limits.maxBytesPerSnapshot` | Integer from 1 to 268,435,456 (256 MiB). |
 | `limits.lockTimeoutSeconds` | Integer from 1 to 300. |
 
-Omitted values inherit defaults. JSON settings use the documented types rather than the nullable C# patch convention: explicit nulls are rejected except for `files.snapshotRootPath`. Unknown keys, duplicate keys, unsupported enum values and invalid limits fail configuration, even if a narrower setting would replace them. Snapshot, artifact and recovery directories must be separate and may not contain one another.
+Omitted values inherit defaults. JSON settings use the documented types rather than the nullable C# patch convention. Explicit nulls are rejected except for `files.snapshotRootPath`. Unknown keys, duplicate keys, unsupported enum values and invalid limits fail configuration, even if a narrower setting would replace them. Snapshot, artifact and recovery directories must be separate and may not contain one another.
 
 ### Class and method: `[SnapshotSettings]`
 
@@ -216,7 +216,7 @@ Pass this record to `Snapshots.Run`, `RunAsync` or `Begin`. It configures a test
 | `MaxNestingDepth`, `MaxValuesPerSnapshot`, `MaxBytesPerSnapshot` | Override the three project capture limits, using the same ranges. |
 | `CancellationToken` | Cancel Imprint-owned capture, comparison and lock-wait work. Custom callbacks are not interrupted or passed the token. An active storage transaction completes or rolls back. |
 
-Nullable properties inherit when omitted. There is no per-test `Format`, custom `Comparer`, or lock-timeout property: format and custom equality belong to captures; lock timeout belongs to project configuration.
+Nullable properties inherit when omitted. There is no per-test `Format`, custom `Comparer`, or lock-timeout property. Format and custom equality belong to captures, and lock timeout belongs to project configuration.
 
 ### Run environment and update precedence
 
@@ -265,7 +265,7 @@ Each preference applies throughout a capture, including nested values. Enum flag
 | `IgnoreStringCase` | Ordinal case-insensitive string comparison; JSON property names remain case-sensitive. | `false` |
 | `IgnoreLineEndings` | Treat CRLF and LF as equal in text snapshots. | `true` |
 | `IgnoreTrailingWhitespace` | Ignore trailing spaces and tabs on each text line. | `false` |
-| `MaxUnorderedArrayLength` | Bound unordered matching to arrays of this length; range 1–1,024. | `256` |
+| `MaxUnorderedArrayLength` | Bound unordered matching to arrays of this length; range 1 to 1,024. | `256` |
 
 Comparison settings decide equality; they do not transform the stored output. JSON comparison is structural and ignores formatting and object-property order. See [type support](TYPE-SUPPORT.md) for numeric boundaries.
 
@@ -315,7 +315,7 @@ For defaults used only by selected captures, pass the shared record through `Sna
 | `SnapshotWriters.Register<T>(writer)` | Replace the writer for a declared type globally. Register during startup before concurrent tests. |
 | `SnapshotWriters.Write(writer, value, context)` | Delegate nested writing to an existing generated, built-in or registered writer while retaining context. |
 | `[assembly: SnapshotInclude<MyType>]` | Request generation for a concrete type reached only through a generic helper. |
-| `SnapshotWriteContext.Representation` | Read `ResolvedSnapshotRepresentation`: concrete, read-only enum, byte-array and dictionary preferences. |
+| `SnapshotWriteContext.Representation` | Read `ResolvedSnapshotRepresentation`, the concrete read-only enum, byte-array and dictionary preferences. |
 | `SnapshotWriteContext.Path` | Current JSON-style path, initially `$`. |
 | `SnapshotWriteContext.At(member)` / `At(index)` | Push a member/index path; disposing the returned frame restores the previous path. |
 | `ISnapshotComparer.Compare(expected, received, format, options)` | Custom equality for already captured text. Receives `ResolvedSnapshotComparison`, whose fields are non-nullable, and a resolved format. |

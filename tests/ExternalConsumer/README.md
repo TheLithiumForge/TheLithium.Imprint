@@ -7,7 +7,7 @@ dotnet pack TheLithium.Imprint.slnx -c Release
 node tests/ExternalConsumer/verify-package-consumers.ts
 ```
 
-One script covers Windows, Linux and macOS. It needs the .NET SDK selected by global.json and Node 22.6 or later, which runs TypeScript directly — there is nothing to compile or install. Native AOT additionally requires the platform's native compiler and linker; on Windows the runner adds the Visual Studio C++ tools to `PATH` itself if they are present.
+One script covers Windows, Linux and macOS. It needs the .NET SDK selected by global.json and Node 22.6 or later, which runs TypeScript directly, so there is nothing to compile or install. Native AOT additionally requires the platform's native compiler and linker; on Windows the runner adds the Visual Studio C++ tools to `PATH` itself if they are present.
 
 | Option | Flag |
 | --- | --- |
@@ -17,7 +17,7 @@ One script covers Windows, Linux and macOS. It needs the .NET SDK selected by gl
 
 Without an output path, the runner creates a unique temporary directory and prints its location. It retains logs, TRX reports, snapshots, native binaries and package hashes for inspection. CI runs the same script on Windows, Linux and macOS.
 
-The runner copies the templates before compiling. Each copy has its own NuGet configuration, package cache and build settings. It consumes only the freshly packed main/Core packages, with no project references, shared implementation tests, internals access or repository Directory.Build imports. Do not add these templates to the main solution: the negative project intentionally cannot build, and an in-repository build would defeat this check.
+The runner copies the templates before compiling. Each copy has its own NuGet configuration, package cache and build settings. It consumes only the freshly packed main/Core packages, with no project references, shared implementation tests, internals access or repository Directory.Build imports. Do not add these templates to the main solution. The negative project intentionally cannot build, and an in-repository build would defeat this check.
 
 ## Execution matrix
 
