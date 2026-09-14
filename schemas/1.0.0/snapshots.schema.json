@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/TheLithiumForge/TheLithium.Imprint/main/schemas/1.0.0/snapshots.schema.json",
+  "title": "TheLithium.Imprint project configuration",
+  "description": "Optional snapshots.config.json in the test-project root. Every property has a default, so the file is only needed to change one.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "version": {
+      "description": "Configuration format version.",
+      "const": 1,
+      "default": 1
+    },
+    "update": {
+      "description": "What a successful test is allowed to write. verify: never write. missing: create absent snapshots, fail on changes. all: create and overwrite, and delete snapshots the test no longer captures.",
+      "enum": [
+        "verify",
+        "missing",
+        "all"
+      ],
+      "default": "missing"
+    },
+    "allowEmptyTests": {
+      "description": "Allow a test that captures nothing to pass instead of failing as a likely mistake.",
+      "type": "boolean",
+      "default": false
+    },
+    "files": {
+      "description": "Where snapshots and failure artifacts are written.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "snapshotFolderName": {
+          "description": "Folder name that holds the snapshots, created next to the test sources.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[^<>:\"/\\\\|?*\\u0000-\\u001f]+$",
+          "default": "__snapshots__"
+        },
+        "snapshotRootPath": {
+          "description": "Put snapshots somewhere else entirely. Project-relative or absolute. Replaces the default source-adjacent root.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "failureArtifactPath": {
+          "description": "Where expected/received files are written when a test fails. Must be outside the snapshots root.",
+          "type": "string",
+          "minLength": 1,
+          "default": "artifacts/imprint/failures"
+        }
+      }
+    },
+    "stringContent": {
+      "description": "Interpret root strings as ordinary values or already serialized JSON documents. No content detection.",
+      "enum": ["value", "json"],
+      "default": "value"
+    },
+    "representation": {
+      "description": "Enum, byte-array and dictionary preferences applied throughout a capture. Individual categories can be overridden for a test or assertion.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enums": { "enum": ["name-or-number", "number"], "default": "name-or-number" },
+        "byteArrays": { "enum": ["numbers", "base64"], "default": "numbers" },
+        "dictionaries": { "enum": ["automatic", "entries"], "default": "automatic" }
+      }
+    },
+    "naming": {
+      "description": "How snapshot folders and files get their names.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "unnamedCaptures": {
+          "description": "Filename for a capture with no explicit name. name-then-order: use the variable name, else snapshot-1, snapshot-2. order: always snapshot-1, snapshot-2. explicit-only: require a name at every call.",
+          "enum": [
+            "name-then-order",
+            "order",
+            "explicit-only"
+          ],
+          "default": "name-then-order"
+        },
+        "useFrameworkDisplayNames": {
+          "description": "Name the test folder after the framework display name (e.g. [Fact(DisplayName = \"...\")]) instead of the C# method name, when one exists.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "comparison": {
+      "description": "When a stored snapshot and a new capture count as equal. These rules never change what is written to disk.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "numericTolerance": {
+          "description": "Largest absolute difference accepted between two JSON numbers. 0 means exact.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 79228162514264337593543950335,
+          "default": 0
+        },
+        "ignoreArrayOrder": {
+          "description": "Match JSON array elements in any order. Duplicates still have to appear the same number of times.",
+          "type": "boolean",
+          "default": false
+        },
+        "ignoreStringCase": {
+          "description": "Compare string values case-insensitively. Property names stay case-sensitive.",
+          "type": "boolean",
+          "default": false
+        },
+        "ignoreLineEndings": {
+          "description": "Treat CRLF and LF as equal in text snapshots. Keep this on for cross-platform repositories.",
+          "type": "boolean",
+          "default": true
+        },
+        "ignoreTrailingWhitespace": {
+          "description": "Ignore spaces and tabs at the end of each line of a text snapshot.",
+          "type": "boolean",
+          "default": false
+        },
+        "maxUnorderedArrayLength": {
+          "description": "Longest array ignoreArrayOrder will try to match. Bounds the matching cost.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024,
+          "default": 256
+        }
+      }
+    },
+    "limits": {
+      "description": "Safety valves. Raise one only when a legitimate snapshot hits it.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxNestingDepth": {
+          "description": "Deepest object or array nesting that will be serialized.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256,
+          "default": 64
+        },
+        "maxValuesPerSnapshot": {
+          "description": "Most values a single capture may visit. Catches runaway or cyclic graphs.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000000,
+          "default": 100000
+        },
+        "maxBytesPerSnapshot": {
+          "description": "Largest single snapshot file, in UTF-8 bytes.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 268435456,
+          "default": 4194304
+        },
+        "lockTimeoutSeconds": {
+          "description": "How long to wait for another process to release the snapshot folder lock.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300,
+          "default": 10
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TheLithium.Imprint" Version="1.0.0" />
+    <Compile Include="$(Scenario).cs" />
+  </ItemGroup>
+</Project>

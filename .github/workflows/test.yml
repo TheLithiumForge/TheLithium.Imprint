@@ -1,0 +1,64 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_NOLOGO: true
+  NUGET_XMLDOC_MODE: skip
+
+jobs:
+  managed:
+    name: Managed (non-Native AOT) build and tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+          - os: ubuntu-latest
+          - os: macos-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Test workflow scripts
+        run: node --test .github/scripts/scripts.test.ts tests/ExternalConsumer/environment.test.ts
+      - name: Restore
+        run: dotnet restore TheLithium.Imprint.slnx --force-evaluate
+      - name: Build (managed / non-Native AOT)
+        run: dotnet build TheLithium.Imprint.slnx -c Release --no-restore
+      - name: Test managed executable specifications (non-Native AOT)
+        run: dotnet run --project tests/TheLithium.Imprint.Specifications -c Release --no-build --no-restore -- --expect-managed
+      - name: Test managed framework projects (non-Native AOT)
+        run: >-
+          dotnet test TheLithium.Imprint.slnx
+          -c Release
+          --no-build
+          --no-restore
+          --logger trx
+          --results-directory artifacts/test-results
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: managed-validation-${{ matrix.os }}
+          path: artifacts/test-results

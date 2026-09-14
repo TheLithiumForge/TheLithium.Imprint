@@ -1,0 +1,8 @@
+{
+  "Id": "order-123",
+  "Items": [
+    "Keyboard",
+    "Cable"
+  ],
+  "Total": 42.50
+}

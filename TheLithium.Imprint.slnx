@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TheLithium.Imprint.Build/TheLithium.Imprint.Build.csproj" />
+    <Project Path="src/TheLithium.Imprint.Core/TheLithium.Imprint.Core.csproj" />
+    <Project Path="src/TheLithium.Imprint.Generator/TheLithium.Imprint.Generator.csproj" />
+    <Project Path="src/TheLithium.Imprint/TheLithium.Imprint.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TheLithium.Imprint.Generator.Tests/TheLithium.Imprint.Generator.Tests.csproj" />
+    <Project Path="tests/TheLithium.Imprint.MSTest.Tests/TheLithium.Imprint.MSTest.Tests.csproj" />
+    <Project Path="tests/TheLithium.Imprint.NUnit.Tests/TheLithium.Imprint.NUnit.Tests.csproj" />
+    <Project Path="tests/TheLithium.Imprint.Specifications/TheLithium.Imprint.Specifications.csproj" />
+    <Project Path="tests/TheLithium.Imprint.Tests/TheLithium.Imprint.Tests.csproj" />
+  </Folder>
+</Solution>

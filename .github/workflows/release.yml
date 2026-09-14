@@ -1,0 +1,157 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: SemVer package version, without or with the leading v
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_NOLOGO: true
+  NUGET_XMLDOC_MODE: skip
+
+jobs:
+  prepare:
+    name: Validate release request from main
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Resolve release version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: node .github/scripts/resolve-version.ts
+
+  validate:
+    name: Cross-platform managed and Native AOT validation
+    needs: prepare
+    uses: ./.github/workflows/build-test.yml
+
+  publish:
+    name: Pack, verify, and publish
+    needs: [prepare, validate]
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: write
+      # Lets the job request the OIDC token that nuget.org exchanges for a
+      # short-lived API key. Without it, trusted publishing cannot work.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Restore release build
+        run: >-
+          dotnet restore TheLithium.Imprint.slnx
+          -p:Version=${{ needs.prepare.outputs.version }}
+          --force-evaluate
+      - name: Build release
+        run: >-
+          dotnet build TheLithium.Imprint.slnx
+          -c Release
+          -p:Version=${{ needs.prepare.outputs.version }}
+          --no-restore
+      - name: Pack NuGet packages
+        run: >-
+          dotnet pack TheLithium.Imprint.slnx
+          -c Release
+          -p:Version=${{ needs.prepare.outputs.version }}
+          --no-build
+          --no-restore
+      - name: Restore package consumers
+        run: >-
+          dotnet restore TheLithium.Imprint.slnx
+          -p:Version=${{ needs.prepare.outputs.version }}
+          -p:UsePackageReferences=true
+          -p:RestorePackagesPath=artifacts/nuget/release-consumer
+          --force-evaluate
+      - name: Verify packed package consumers
+        run: >-
+          dotnet test TheLithium.Imprint.slnx
+          -c Release
+          -p:Version=${{ needs.prepare.outputs.version }}
+          -p:UsePackageReferences=true
+          -p:RestorePackagesPath=artifacts/nuget/release-consumer
+          --no-restore
+          --logger trx
+          --results-directory artifacts/package-test-results
+      - name: Verify packed managed specifications
+        run: >-
+          dotnet run
+          --project tests/TheLithium.Imprint.Specifications
+          -c Release
+          -p:Version=${{ needs.prepare.outputs.version }}
+          -p:UsePackageReferences=true
+          -p:RestorePackagesPath=artifacts/nuget/release-consumer
+          --no-build
+          --no-restore
+          --
+          --expect-managed
+      - name: Verify packed Native AOT consumer
+        run: >-
+          dotnet publish tests/TheLithium.Imprint.Specifications
+          -c Release
+          -r linux-x64
+          -p:Version=${{ needs.prepare.outputs.version }}
+          -p:UsePackageReferences=true
+          -p:RestorePackagesPath=artifacts/nuget/release-consumer
+          -p:PublishAot=true
+          -p:SelfContained=true
+          -p:IlcTreatWarningsAsErrors=true
+          -p:ILLinkTreatWarningsAsErrors=true
+          -o artifacts/native/release-linux-x64
+      - name: Run packed Native AOT specifications
+        run: ./artifacts/native/release-linux-x64/TheLithium.Imprint.Specifications --expect-aot
+      - name: Verify package outputs
+        run: node .github/scripts/verify-packages.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-packages
+          path: |
+            artifacts/packages/*.nupkg
+            artifacts/package-test-results
+
+      # Everything above must succeed before a credential exists at all. The key below is
+      # minted by nuget.org for this run and expires in one hour, so it is requested here
+      # rather than at the start of the job.
+      - name: Request a short-lived NuGet key (trusted publishing)
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+      - name: Publish packages to NuGet.org
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: node .github/scripts/publish-packages.ts
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: node .github/scripts/create-release.ts

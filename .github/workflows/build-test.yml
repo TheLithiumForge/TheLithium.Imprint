@@ -1,0 +1,23 @@
+name: Build and test (managed and Native AOT)
+
+# The individual workflows own push/PR runs and their README status badges.
+# Releases call this coordinator to require every validation lane.
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    uses: ./.github/workflows/build.yml
+
+  managed:
+    name: Managed tests
+    uses: ./.github/workflows/test.yml
+
+  aot:
+    name: Native AOT tests
+    uses: ./.github/workflows/test-aot.yml

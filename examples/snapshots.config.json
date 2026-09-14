@@ -1,0 +1,39 @@
+{
+  "$schema": "../schemas/1.0.0/snapshots.schema.json",
+  "version": 1,
+
+  "update": "missing",
+  "allowEmptyTests": false,
+  "stringContent": "value",
+  "representation": {
+    "enums": "name-or-number",
+    "byteArrays": "numbers",
+    "dictionaries": "automatic"
+  },
+
+  "files": {
+    "snapshotFolderName": "__snapshots__",
+    "failureArtifactPath": "artifacts/imprint/failures"
+  },
+
+  "naming": {
+    "unnamedCaptures": "name-then-order",
+    "useFrameworkDisplayNames": false
+  },
+
+  "comparison": {
+    "numericTolerance": 0,
+    "ignoreArrayOrder": false,
+    "ignoreStringCase": false,
+    "ignoreLineEndings": true,
+    "ignoreTrailingWhitespace": false,
+    "maxUnorderedArrayLength": 256
+  },
+
+  "limits": {
+    "maxNestingDepth": 64,
+    "maxValuesPerSnapshot": 100000,
+    "maxBytesPerSnapshot": 4194304,
+    "lockTimeoutSeconds": 10
+  }
+}

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Opens explicit fixture lifetimes, so the build task must not wrap these methods too. -->
+    <Compile Update="ConfigurationSchemaTests.cs" ImprintInstrument="false" />
+    <Compile Update="ConfigurationLayerTests.cs" ImprintInstrument="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0" PrivateAssets="all" />
+    <ProjectReference Include="../TheLithium.Imprint.Specifications/TheLithium.Imprint.Specifications.csproj" />
+    <Compile Include="../TheLithium.Imprint.Specifications/TestSupport.cs" Link="Specifications/TestSupport.cs" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,11 @@
+* text=auto
+*.csproj text eol=lf
+*.props text eol=lf
+*.targets text eol=lf
+*.yml text eol=lf
+*.slnx text eol=lf
+*.cs text eol=lf
+*.json text eol=lf
+*.snap text eol=lf
+*.txt text eol=lf
+*.md text eol=lf
