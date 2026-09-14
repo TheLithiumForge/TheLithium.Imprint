@@ -1,11 +1,10 @@
 /**
- * Resolves the release version from a pushed tag or a manual dispatch input.
+ * Resolves a manually requested release version, restricted to main.
  *
  * Inputs (environment):
- *   GITHUB_REF        refs/tags/v1.2.3 for a tag push
- *   GITHUB_REF_NAME   v1.2.3
+ *   GITHUB_REF        must be refs/heads/main
+ *   GITHUB_EVENT_NAME must be workflow_dispatch
  *   INPUT_VERSION     manual dispatch version, with or without a leading v
- *   INPUT_PRERELEASE  manual dispatch prerelease flag
  *
  * Outputs (GITHUB_OUTPUT): version, tag, prerelease
  */
@@ -13,9 +12,8 @@ import { appendFileSync } from "node:fs";
 
 export type VersionInputs = {
   ref?: string;
-  refName?: string;
+  eventName?: string;
   inputVersion?: string;
-  inputPrerelease?: string;
 };
 
 export type ResolvedVersion = {
@@ -29,22 +27,21 @@ const SEMVER =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 
 export function resolveVersion(inputs: VersionInputs): ResolvedVersion {
-  const { ref, refName, inputVersion, inputPrerelease } = inputs;
-
-  // A tag push always wins: it is the thing being released.
-  const fromTag = ref?.startsWith("refs/tags/v") ? refName : undefined;
-  const raw = (fromTag ?? inputVersion ?? "").trim().replace(/^v/, "");
+  const { ref, eventName, inputVersion } = inputs;
+  if (ref !== "refs/heads/main" || eventName !== "workflow_dispatch") {
+    throw new Error("Releases must be manually dispatched from main.");
+  }
+  const raw = (inputVersion ?? "").trim().replace(/^v/, "");
 
   if (!raw) {
-    throw new Error("No version supplied. Push a v*.*.* tag or provide the version input.");
+    throw new Error("No version supplied. Provide the version input.");
   }
-  if (!SEMVER.test(raw)) {
+  const match = SEMVER.exec(raw);
+  if (!match) {
     throw new Error(`Version '${raw}' is not valid SemVer.`);
   }
 
-  // A prerelease label makes the release a prerelease regardless of the input flag;
-  // a stable version honours the flag.
-  const prerelease = raw.includes("-") || String(inputPrerelease ?? "false") === "true";
+  const prerelease = Boolean(match[4]);
 
   return { version: raw, tag: `v${raw}`, prerelease: String(prerelease) };
 }
@@ -52,9 +49,8 @@ export function resolveVersion(inputs: VersionInputs): ResolvedVersion {
 function main(): void {
   const resolved = resolveVersion({
     ref: process.env.GITHUB_REF,
-    refName: process.env.GITHUB_REF_NAME,
+    eventName: process.env.GITHUB_EVENT_NAME,
     inputVersion: process.env.INPUT_VERSION,
-    inputPrerelease: process.env.INPUT_PRERELEASE,
   });
 
   const lines = Object.entries(resolved).map(([key, value]) => `${key}=${value}`);

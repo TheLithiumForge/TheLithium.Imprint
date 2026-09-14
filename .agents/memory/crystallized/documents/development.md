@@ -54,7 +54,9 @@ On Windows, native linking requires the Visual Studio native build prerequisites
 
 [build-test.yml](../../../../.github/workflows/build-test.yml) owns the Windows, Ubuntu and macOS matrix. Its managed lane builds, checks formatting and runs framework/generator/specification tests. Its package lane restores locally packed packages, tests managed consumers and publishes/runs the specification executable as Native AOT. Inspect the workflow for exact platform prerequisites and commands.
 
-[release.yml](../../../../.github/workflows/release.yml) is the publication authority. Tags matching its version pattern or deliberate manual dispatch invoke the reusable validation workflow before publishing. It then verifies the requested packages, including Linux Native AOT, and publishes NuGet/GitHub assets. The repository requires its configured `NUGET_API_KEY`; do not print or inspect credentials. Normal pushes and pull requests do not publish packages. Implementation approval does not authorize release dispatch, tags or package publication.
+[release.yml](../../../../.github/workflows/release.yml) is the publication authority. Start it manually from `main` with a SemVer `version` input (an optional leading `v` is accepted). Prerelease versions such as `1.2.3-rc.1` automatically produce GitHub prereleases. Requests from other branches or tags cannot publish; pushes, including version changes and tags, do not start releases. The workflow validates the request before invoking the reusable cross-platform validation workflow, then verifies the requested packages, including Linux Native AOT, and publishes NuGet/GitHub assets from the selected main commit. NuGet trusted publishing uses the configured `NUGET_USER` and OIDC to obtain a short-lived key only after verification. Implementation approval does not authorize release dispatch, tags or package publication.
+
+Release scripts run directly as TypeScript with Node 24. Their tests run in every managed OS lane and locally with `node --test .github/scripts/scripts.test.ts`.
 
 ## Configuration contract maintenance
 

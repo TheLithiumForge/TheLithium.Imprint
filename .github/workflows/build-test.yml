@@ -35,6 +35,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test release scripts
+        run: node --test .github/scripts/scripts.test.ts
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
@@ -79,6 +84,9 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json

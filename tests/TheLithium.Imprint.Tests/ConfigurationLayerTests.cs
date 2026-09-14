@@ -5,8 +5,20 @@ using Xunit;
 
 namespace TheLithium.Imprint.Tests;
 
-public sealed class ConfigurationLayerTests
+public sealed class ConfigurationLayerTests : IDisposable
 {
+    // These tests create temporary baselines; isolate run-wide policy just as the specification harness does.
+    private readonly EnvironmentValue _ci = new("CI", "false");
+    private readonly EnvironmentValue _update = new("IMPRINT_UPDATE", null);
+    private readonly EnvironmentValue _project = new("IMPRINT_PROJECT_ROOT", null);
+
+    public void Dispose()
+    {
+        _project.Dispose();
+        _update.Dispose();
+        _ci.Dispose();
+    }
+
     [Fact]
     public void JsonSnapshotsKeepReadableTextAndRoundTripEscapedCharacters()
     {

@@ -5,47 +5,84 @@
  * pushed rather than by watching a release fail.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
 import { resolveVersion } from "./resolve-version.ts";
 import { orderedPackages, packageId } from "./packages.ts";
 
-test("a pushed tag determines the version", () => {
-  const result = resolveVersion({ ref: "refs/tags/v1.2.3", refName: "v1.2.3" });
-  assert.deepEqual(result, { version: "1.2.3", tag: "v1.2.3", prerelease: "false" });
-});
+const manualMain = { ref: "refs/heads/main", eventName: "workflow_dispatch" };
 
-test("a tag wins over a manual input", () => {
-  const result = resolveVersion({ ref: "refs/tags/v2.0.0", refName: "v2.0.0", inputVersion: "9.9.9" });
-  assert.equal(result.version, "2.0.0");
+test("releases reject other branches, tags, pushes, and missing context", () => {
+  for (const context of [
+    { ref: "refs/heads/feature", eventName: "workflow_dispatch" },
+    { ref: "refs/heads/master", eventName: "workflow_dispatch" },
+    { ref: "refs/tags/v1.2.3", eventName: "workflow_dispatch" },
+    { ref: "refs/tags/v1.2.3", eventName: "push" },
+    { ref: "refs/heads/main", eventName: "push" },
+    {},
+  ]) {
+    assert.throws(() => resolveVersion({ ...context, inputVersion: "1.2.3" }), /manually dispatched from main/);
+  }
 });
 
 test("a manual input works with or without the leading v", () => {
-  assert.equal(resolveVersion({ inputVersion: "v1.2.3" }).version, "1.2.3");
-  assert.equal(resolveVersion({ inputVersion: "1.2.3" }).version, "1.2.3");
+  for (const inputVersion of ["v1.2.3", "1.2.3", "  v1.2.3  "]) {
+    assert.deepEqual(resolveVersion({ ...manualMain, inputVersion }), {
+      version: "1.2.3", tag: "v1.2.3", prerelease: "false",
+    });
+  }
 });
 
-test("a prerelease label forces a prerelease regardless of the flag", () => {
-  const result = resolveVersion({ inputVersion: "1.0.0-preview.1", inputPrerelease: "false" });
+test("a prerelease label determines prerelease status", () => {
+  const result = resolveVersion({ ...manualMain, inputVersion: "1.0.0-preview.1" });
   assert.equal(result.prerelease, "true");
 });
 
-test("a stable version honours the prerelease flag", () => {
-  assert.equal(resolveVersion({ inputVersion: "1.0.0", inputPrerelease: "true" }).prerelease, "true");
-  assert.equal(resolveVersion({ inputVersion: "1.0.0", inputPrerelease: "false" }).prerelease, "false");
+test("hyphens in build metadata do not make stable versions prereleases", () => {
+  assert.equal(resolveVersion({ ...manualMain, inputVersion: "1.0.0+build-123" }).prerelease, "false");
+  assert.equal(resolveVersion({ ...manualMain, inputVersion: "1.0.0-rc.1+build-123" }).prerelease, "true");
 });
 
 test("an invalid version is rejected", () => {
-  for (const bad of ["1.2", "1.2.3.4", "one.two.three", "v", "1.2.3-", "01.2.3"]) {
-    assert.throws(() => resolveVersion({ inputVersion: bad }), /not valid SemVer|No version/, `accepted '${bad}'`);
+  for (const bad of ["1.2", "1.2.3.4", "one.two.three", "v", "1.2.3-", "01.2.3", "1.2.3-01", "1.2.3\nother=value"]) {
+    assert.throws(() => resolveVersion({ ...manualMain, inputVersion: bad }), /not valid SemVer|No version/, `accepted '${bad}'`);
   }
 });
 
 test("a missing version is rejected", () => {
-  assert.throws(() => resolveVersion({}), /No version supplied/);
+  assert.throws(() => resolveVersion(manualMain), /No version supplied/);
+});
+
+test("the workflow entry point writes outputs and rejects requests outside main", () => {
+  const directory = mkdtempSync(join(tmpdir(), "imprint-version-"));
+  const output = join(directory, "output");
+  try {
+    const env = {
+      ...process.env,
+      GITHUB_REF: manualMain.ref,
+      GITHUB_EVENT_NAME: manualMain.eventName,
+      INPUT_VERSION: "v1.2.3-rc.1",
+      GITHUB_OUTPUT: output,
+    };
+    const script = fileURLToPath(new URL("./resolve-version.ts", import.meta.url));
+    const accepted = spawnSync(process.execPath, [script], { env, encoding: "utf8" });
+    assert.equal(accepted.status, 0, accepted.stderr);
+    const expected = "version=1.2.3-rc.1\ntag=v1.2.3-rc.1\nprerelease=true\n";
+    assert.equal(readFileSync(output, "utf8"), expected);
+    const rejected = spawnSync(process.execPath, [script], {
+      env: { ...env, GITHUB_REF: "refs/heads/feature" }, encoding: "utf8",
+    });
+    assert.equal(rejected.status, 1);
+    assert.match(rejected.stderr, /manually dispatched from main/);
+    assert.equal(readFileSync(output, "utf8"), expected);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("package ids are read from file names", () => {
