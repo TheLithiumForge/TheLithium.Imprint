@@ -23,7 +23,7 @@ You need:
 Run this in your test project:
 
 ```bash
-dotnet add package TheLithium.Imprint --version 1.0.1
+dotnet add package TheLithium.Imprint --version 1.0.2
 ```
 
 Installing the package is the whole setup. If you come from Verify, you don't need a base class, a fixture, `[UsesVerify]` or a CLI tool.
