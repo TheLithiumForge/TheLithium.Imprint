@@ -1,102 +1,137 @@
 # Test frameworks
 
-For the common cases, see the [README](../README.md). This page collects the per-framework details and the edge cases.
+Imprint works with any test framework that fails a test on an uncaught exception, because the MSBuild task adds the snapshot lifetime to your test methods at compile time.
 
-There is no adapter to install and no base class to inherit. The MSBuild task supplies the snapshot lifetime at compile time, so a test method is just a test method.
+You don't install an adapter or inherit a base class. A test method stays a normal test method.
 
-## What works everywhere
+## Supported frameworks
+
+xUnit, NUnit and MSTest all work the same way:
 
 |                       | xUnit                         | NUnit                         | MSTest                           |
 | --------------------- | ----------------------------- | ----------------------------- | -------------------------------- |
 | Sync test             | `[Fact]`                      | `[Test]`                      | `[TestMethod]`                   |
 | Async test            | `[Fact]` + `Task`             | `[Test]` + `Task`             | `[TestMethod]` + `Task`          |
 | Parameterized         | `[Theory]` + `[InlineData]`   | `[TestCase]`                  | `[DataRow]`                      |
-| Explicit display name | `[Fact(DisplayName = "...")]` | `[Test(Description = "...")]` | `[TestMethod]` + `[DisplayName]` |
+| Display name          | `[Fact(DisplayName = "...")]` | `[Test(Description = "...")]` | `[TestMethod]` + `[DisplayName]` |
 
-Any other runner that fails a test on an uncaught exception works too. That is the only integration requirement.
+Any other runner that fails a test on an uncaught exception works too. That's the only requirement. Snapshots sit right next to your normal assertions:
 
 ```csharp
 public void Example()
 {
     var result = new { Count = 3, Names = new[] { "a", "b", "c" } };
 
-    result.AssertSnapshot("result");
-    "three results".AssertSnapshot("stdout");
+    result.AssertSnapshot("result");          // writes result.json
+    "three results".AssertSnapshot("stdout"); // writes stdout.txt
 
-    Assert.Equal(3, result.Count);   // ordinary assertions sit right alongside
+    Assert.Equal(3, result.Count);
 }
 ```
 
 ## Return types
 
-`void`, `T`, `Task`, `Task<T>`, `ValueTask`, and `ValueTask<T>` are all supported. The original signature stays visible to the runner.
+These return types work, and the runner still sees the original signature:
 
-These are rejected at compile time with **IMP102**, because there is no reliable point at which the method has finished:
+- `void` and `T`
+- `Task` and `Task<T>`
+- `ValueTask` and `ValueTask<T>`
 
-| Rejected                             | Why                                                            |
-| ------------------------------------ | -------------------------------------------------------------- |
-| `async void`                         | Nothing to await; the runner returns before the body finishes  |
-| `async` returning a custom awaitable | Cannot be completed generically without risking early approval |
-| Iterators (`yield return`)           | The body runs lazily, outside the call                         |
-| `ref` / `in` / `out` parameters      | The body cannot be moved into a local function                 |
-| By-ref returns                       | Same                                                           |
-| Tests declared on a `struct`         | Same                                                           |
+The MSBuild task moves your test body into a local function, so it can act after the body returns. Some shapes have no reliable point where the method has finished. These fail the build with `IMP102` instead of being wrapped wrong:
 
-`async Task` is the fix for almost all of these.
+| Rejected                             | Why                                                               |
+| ------------------------------------ | ----------------------------------------------------------------- |
+| `async void`                         | There's nothing to await, so the runner returns before the body finishes |
+| `async` returning a custom awaitable | It can't be completed in a generic way without risking an early approval |
+| Iterators (`yield return`)           | The body runs lazily, after the call has already returned          |
+| `ref`, `in` or `out` parameters      | The body can't move into a local function                          |
+| By-ref returns (`ref int Rejected()`) | Same as above                                                     |
+| Tests declared on a `struct`         | Same as above                                                      |
 
-## The lifetime boundary
+The fix is small in every case. `async Task` fixes almost all of them.
 
-Everything inside the method, including awaited work and `finally` blocks, is inside the boundary and can prevent approval.
-
-Framework teardown that runs _after_ the method is outside it:
+For `async void`, return `Task`:
 
 ```csharp
-public sealed class Tests : IAsyncLifetime
+// Rejected
+public async void Rejected()
 {
-    [Fact]
-    public async Task Example()
-    {
-        value.AssertSnapshot();
-    }                                  // ← snapshots are decided here
+    (await LoadAsync()).AssertSnapshot();
+}
 
-    public async Task DisposeAsync()
-    {
-        await VerifyNoErrorsAsync();   // ← too late to stop the approval
-    }
+// Accepted
+public async Task Accepted()
+{
+    (await LoadAsync()).AssertSnapshot();
 }
 ```
 
-If teardown must influence approval, move it into the method, or open the scope yourself (see below).
+For an iterator, materialize the items, then capture them:
+
+```csharp
+// Rejected
+public IEnumerable<int> Rejected()
+{
+    yield return 1;
+    value.AssertSnapshot();
+}
+
+// Accepted
+public void Accepted()
+{
+    var items = Produce().ToArray();
+    items.AssertSnapshot();
+}
+```
+
+For a `ref`, `in` or `out` parameter, return the value instead:
+
+```csharp
+// Rejected
+public void Rejected(out int count)
+{
+    count = 1;
+    count.AssertSnapshot();
+}
+
+// Accepted
+public void Accepted()
+{
+    var count = Compute();
+    count.AssertSnapshot();
+}
+```
+
+For a custom awaitable, use `Task` or `ValueTask`. For a test on a `struct`, use a `class`.
+
+## Lifetime
+
+Everything inside the method can stop an approval, including awaited work and `finally` blocks. Framework teardown that runs after the method can't, as [Approval](../README.md#approval) shows.
+
+If teardown must affect approval, move it into the method, or open the scope yourself, as [Custom runners](#custom-runners) describes.
 
 ## Names
 
-The suite folder is the containing type; the test folder is the method name.
+The suite folder is the containing type, and the test folder is the method name. `[SnapshotSettings(Name = "...")]` replaces either one:
 
 ```csharp
-[SnapshotSettings(Name = "Contract")]     // on a class → suite folder
+[SnapshotSettings(Name = "Contract")]     // on a class, names the suite folder
 public sealed class ContractTests
 {
-    [SnapshotSettings(Name = "V1")]       // on a method → test folder
+    [SnapshotSettings(Name = "V1")]       // on a method, names the test folder
     [Fact]
     public void CurrentContract() { }
 }
-// → __snapshots__/Contract/V1/
+// writes to __snapshots__/Contract/V1/
 ```
 
-Set `naming.useFrameworkDisplayNames` to `true` in the config to use the framework's display or description metadata for the test folder instead. The generator reads it from known test attributes, including inherited ones, and only when it is a compile-time constant; the method name remains the fallback.
+To name the test folder after the framework's display or description metadata, set `naming.useFrameworkDisplayNames` to `true` in the config. The generator reads it from known test attributes, including inherited ones. It uses it only when the value is a compile-time constant. Otherwise the method name is still the fallback.
 
-A parameterized row's _own_ display text is deliberately ignored. It describes one invocation, not the method, and in several frameworks it is computed at runtime, so using it would make folder identity unstable. Rows are separated by their argument values instead.
+A parameterized row's own display text is ignored on purpose. It describes one invocation, not the method. In several frameworks it's computed at runtime, so using it would make the folder name unstable. Rows are told apart by their argument values instead, as [Parameterized tests](../README.md#parameterized-tests) describes.
 
-## Parameterized tests
+## Custom runners
 
-Rows are separated automatically; see the README for the folder shape. Two things to know:
-
-- The case key uses the same static type contract as snapshot serialization. An opaque row value (an `object`, a type the generator cannot see) cannot produce a stable key. Supply `SnapshotTestOptions.Case` from a custom integration instead.
-- A loop _inside_ one invocation is still one case. Put a stable id in the capture name: `item.AssertSnapshot($"item-{item.Id}")`.
-
-## Opening the scope yourself
-
-For a runner the build task cannot compile, or a host that generates test bodies itself:
+If your runner is one the MSBuild task can't compile, or a host that generates test bodies itself, open the scope yourself:
 
 ```csharp
 using var scope = Snapshots.Begin(new SnapshotTestOptions
@@ -121,24 +156,26 @@ catch (Exception error)
 }
 ```
 
-Rules for an adapter:
+An adapter follows these rules:
 
-- Call `Complete` only after _everything_ that should affect approval has succeeded.
-- `Dispose` without `Complete` abandons the scope and approves nothing. The `using` above is the safety net, not the approval.
-- Treat an uncaught `SnapshotMismatchException`, `SnapshotCaptureException`, `SnapshotConfigurationException`, or `SnapshotConflictException` as a test failure.
-- Reporting and artifact attachment are the runner's job. `SnapshotMismatchException.Report` has the structured results.
+- Call `Complete` only after everything that should affect approval has succeeded.
+- `Dispose` without `Complete` gives up the scope and approves nothing. The `using` above is the safety net, not the approval.
+- Treat an uncaught `SnapshotMismatchException`, `SnapshotCaptureException`, `SnapshotConfigurationException` or `SnapshotConflictException` as a test failure.
+- The runner handles reporting and attaching artifacts. `SnapshotMismatchException.Report` has the structured results.
 
-`Snapshots.Run(...)` and `Snapshots.RunAsync(...)` wrap this pattern when you do not need the scope object itself.
+If you don't need the scope object itself, `Snapshots.Run(...)` and `Snapshots.RunAsync(...)` wrap this pattern.
 
-`[SnapshotSettings]` on a class or method also establishes a lifetime, which is useful when a test reaches its captures indirectly, through a delegate for example, so the call graph cannot see the path.
+`SnapshotTestOptions` carries the settings a runner might need to override per test, such as `Identity`, `Case`, `Variant` and the capture limits. [`SnapshotTestOptions`](API.md#snapshottestoptions) lists all of them. In a normal test method, use `[SnapshotSettings]` and the config file instead.
+
+A `[SnapshotSettings]` attribute on a method also sets up a lifetime. That helps when a test reaches its captures indirectly, e.g. through a delegate, so the call graph can't see the path.
 
 ## Native AOT
 
-Imprint's runtime is AOT-clean. There is no reflective discovery, and the generator and build task never ship into your binary.
+Imprint's runtime is AOT-clean. It does no reflective discovery. Serializers are generated at compile time and registered by module initializers, and the generator and the MSBuild task never ship into your binary.
 
-Your _runner_ is the constraint. Runners that discover tests by reflection generally do not survive trimming. At the time of writing, xunit.v3's in-process runner fails under Native AOT with `The path is empty (Parameter 'path')` from `Assembly.Location`, with or without Imprint present.
+Your runner is the limit. Runners that discover tests by reflection generally don't survive trimming. At the time of writing, the xunit.v3 in-process runner fails under Native AOT with `The path is empty (Parameter 'path')` from `Assembly.Location`, with or without Imprint.
 
-So for an AOT test project, drive the tests from a plain `Main` with an explicit list:
+So for an AOT test project, run the tests from a plain `Main` with a list of them:
 
 ```csharp
 internal static class Program
@@ -163,6 +200,8 @@ internal static class Program
 }
 ```
 
-The build task instruments any method that reaches a capture, not only attributed ones, so these plain methods get the same lifetime, identity, and folder layout as a `[Fact]`.
+The MSBuild task instruments any method that reaches a capture, not only methods with a test attribute. So these plain methods get the same lifetime, identity and folder layout as a `[Fact]`.
 
-[`tests/TheLithium.Imprint.Specifications`](../tests/TheLithium.Imprint.Specifications) is exactly this, and is what the AOT CI lane publishes and runs.
+[`tests/TheLithium.Imprint.Specifications`](../tests/TheLithium.Imprint.Specifications) is a project like this one. CI publishes it as a test executable with `PublishAot=true`, `IlcTreatWarningsAsErrors=true` and `ILLinkTreatWarningsAsErrors=true`, then runs it on Windows, Linux and macOS. The same specification tests also run as normal managed .NET tests.
+
+Back to the [README](../README.md).
