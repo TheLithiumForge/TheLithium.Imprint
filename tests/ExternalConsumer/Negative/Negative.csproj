@@ -3,7 +3,7 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="TheLithium.Imprint" Version="1.0.0" />
+    <PackageReference Include="TheLithium.Imprint" Version="$(ImprintPackageVersion)" />
     <Compile Include="$(Scenario).cs" />
   </ItemGroup>
 </Project>

@@ -28,6 +28,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { sharedVersion } from "../../.github/scripts/packages.ts";
 import { appendWindowsPath } from "./environment.ts";
 
 const TEMPLATE_EXTENSIONS = new Set([".cs", ".csproj", ".props", ".targets"]);
@@ -159,6 +160,18 @@ function createFeed(output: string, packageDirectory: string): string[] {
     hashes.push({ name, sha256: createHash("sha256").update(readFileSync(target)).digest("hex").toUpperCase() });
   }
   writeFileSync(join(output, "package-hashes.json"), `${JSON.stringify(hashes, null, 2)}\n`, "utf8");
+
+  // Consumers reference whatever version was just packed, so a version bump never breaks them.
+  writeFileSync(
+    join(output, "ImprintPackageVersion.props"),
+    `<Project>
+  <PropertyGroup>
+    <ImprintPackageVersion>${sharedVersion(packages)}</ImprintPackageVersion>
+  </PropertyGroup>
+</Project>
+`,
+    "utf8",
+  );
 
   writeFileSync(
     join(output, "NuGet.Config"),

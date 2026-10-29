@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
 import { resolveVersion } from "./resolve-version.ts";
-import { orderedPackages, packageId } from "./packages.ts";
+import { orderedPackages, packageId, packageVersion, sharedVersion } from "./packages.ts";
 
 const manualMain = { ref: "refs/heads/main", eventName: "workflow_dispatch" };
 
@@ -89,6 +89,20 @@ test("package ids are read from file names", () => {
   assert.equal(packageId("TheLithium.Imprint.Core.1.0.0.nupkg"), "TheLithium.Imprint.Core");
   assert.equal(packageId("TheLithium.Imprint.1.0.0.nupkg"), "TheLithium.Imprint");
   assert.equal(packageId("TheLithium.Imprint.1.0.0-preview.2.nupkg"), "TheLithium.Imprint");
+});
+
+test("package versions are read from file names", () => {
+  assert.equal(packageVersion("TheLithium.Imprint.Core.1.0.1.nupkg"), "1.0.1");
+  assert.equal(packageVersion("TheLithium.Imprint.1.0.0-preview.2.nupkg"), "1.0.0-preview.2");
+  assert.equal(sharedVersion(["TheLithium.Imprint.Core.1.0.1.nupkg", "TheLithium.Imprint.1.0.1.nupkg"]), "1.0.1");
+});
+
+test("consumers refuse a feed with mixed or missing versions", () => {
+  assert.throws(
+    () => sharedVersion(["TheLithium.Imprint.Core.1.0.0.nupkg", "TheLithium.Imprint.1.0.1.nupkg"]),
+    /found 2: 1.0.0, 1.0.1/,
+  );
+  assert.throws(() => sharedVersion([]), /found 0/);
 });
 
 function withPackages(names: string[], body: (directory: string) => void): void {

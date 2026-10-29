@@ -28,6 +28,20 @@ export function packageId(fileName: string): string {
   return match ? match[1] : withoutExtension;
 }
 
+/** Version from a .nupkg file name: TheLithium.Imprint.Core.1.0.0.nupkg -> 1.0.0. */
+export function packageVersion(fileName: string): string {
+  return fileName.replace(/\.nupkg$/i, "").slice(packageId(fileName).length + 1);
+}
+
+/** The one version shared by every package file. Throws when there are none, or more than one. */
+export function sharedVersion(fileNames: readonly string[]): string {
+  const versions = [...new Set(fileNames.map(packageVersion))];
+  if (versions.length !== 1) {
+    throw new Error(`Expected one package version, found ${versions.length}: ${versions.join(", ")}`);
+  }
+  return versions[0];
+}
+
 export function findPackages(directory: string = PACKAGE_DIRECTORY): PackageFile[] {
   let entries: string[];
   try {
