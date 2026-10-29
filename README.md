@@ -237,7 +237,7 @@ An entry is unused when the baseline has a snapshot that the test no longer capt
 
 `all` deletes unused files only when it applies to the whole test, through an attribute, the config file or `IMPRINT_UPDATE`. A single `UpdateSnapshot()` call never deletes anything.
 
-A run-wide `verify` stops baseline changes. You get it from `IMPRINT_UPDATE=verify` or from CI. In that mode, an interrupted baseline transaction from an earlier run is reported instead of recovered. Locks and failure diagnostics can still write.
+A run-wide `verify` stops baseline changes. You get it from `IMPRINT_UPDATE=verify` or from CI.
 
 #### CI
 
@@ -557,7 +557,7 @@ The `$schema` line gives you completion and inline docs in VS Code, Visual Studi
 
 The runtime does no reflection. Serializers are generated at compile time and registered by module initializers. The generator and the MSBuild task run during the build and don't ship into your app.
 
-Your test runner is the limit under AOT. Runners that discover tests by reflection generally don't survive trimming. [Native AOT](docs/FRAMEWORKS.md#native-aot) shows how to run the tests from a plain `Main`, and what CI checks.
+Your test runner is the limit under AOT. Runners that discover tests by reflection generally don't survive trimming. [Native AOT](docs/FRAMEWORKS.md#native-aot) shows how to run the tests from a plain `Main`.
 
 ### Custom runners
 
@@ -588,11 +588,11 @@ Imprint doesn't include:
 
 ### Storage
 
-The store uses locks, journals and fingerprints to coordinate local processes that cooperate. It doesn't provide transactions on a distributed file system, or protection against hostile concurrent edits.
+Several test processes on one machine can share the snapshot folders safely. Imprint doesn't support distributed file systems, and it doesn't guard against someone editing the files while tests run.
 
 The baseline, failure-artifact and recovery folders must be separate. None of them can contain another.
 
-Imprint rejects existing symbolic links and reparse points at or below the project folder. It checks configured external paths from their file system root. Standard macOS system aliases are resolved for these checks.
+Imprint rejects existing symbolic links and reparse points at or below the project folder. It checks configured external paths from their file system root.
 
 A failure to write diagnostics never replaces the original test failure. It appears in `SnapshotReport.ArtifactError` and in the mismatch message. When a test aborts, it appears in the original exception's `Data["TheLithium.Imprint.ArtifactError"]` instead.
 
@@ -606,10 +606,6 @@ Keep names short, or set `core.longpaths=true`. Imprint helps in two ways:
 
 - The test folder defaults to the C# method name instead of the framework display name. `naming.useFrameworkDisplayNames` is `false`.
 - The case hash is left out whenever the readable label already tells rows apart.
-
-## Development
-
-[Maintainer docs](.agents/memory/crystallized/documents/development.md) cover building, testing, CI, releases and the internal architecture.
 
 ## Roadmap
 

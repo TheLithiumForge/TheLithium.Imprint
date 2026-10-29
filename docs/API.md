@@ -36,8 +36,6 @@ Comparison and approval happen after the method body succeeds, including its awa
 
 Names identify files within one test invocation. Pass names without an extension, and Imprint picks `.json` or `.txt`. Without a name, Imprint uses the variable or member name, then `snapshot-1`, `snapshot-2` and so on. Names you pass must be unique within the test, ignoring case.
 
-The capture methods are in [SnapshotExtensions.cs](../src/TheLithium.Imprint.Core/SnapshotExtensions.cs).
-
 ### Common tasks
 
 Each task has one call or approach:
@@ -87,7 +85,7 @@ For representation and comparison, each field you set overrides the earlier laye
 
 A `null` field in a C# options record means inherit. Setting `false`, zero or an enum's zero-valued member is a real override. `StringContent` follows the same order, as one setting. An assertion override leaves the test defaults and later assertions as they were.
 
-Update policy has its own order, as [Update precedence](#update-precedence) describes. The resolution code is in [Settings.cs](../src/TheLithium.Imprint.Core/Configuration/Settings.cs).
+Update policy has its own order, as [Update precedence](#update-precedence) describes.
 
 ### Built-in defaults
 
@@ -217,14 +215,11 @@ The file follows these rules:
 - Keys you leave out inherit the defaults.
 - JSON settings use the types above, not the nullable C# patch convention. `null` is rejected, except for `files.snapshotRootPath`.
 - Unknown keys, duplicate keys, wrong types, unsupported enum values and invalid limits fail configuration. Invalid project settings are rejected even when a narrower setting overrides them.
-- Only the current key names work. Historical aliases aren't supported.
 - The snapshot, artifact and recovery folders must be separate, as [Storage](../README.md#storage) describes.
-
-The reader is in [ProjectConfigurationReader.cs](../src/TheLithium.Imprint.Core/Configuration/ProjectConfigurationReader.cs).
 
 ### Editor support
 
-The keys above are described by [`schemas/1.0.0/snapshots.schema.json`](../schemas/1.0.0/snapshots.schema.json). The schema ships inside the NuGet package and is published in this repository. `ConfigurationSchemaTests` checks it against the reader, so it lists exactly the keys the reader accepts.
+The keys above are described by a JSON schema, [`snapshots.schema.json`](../schemas/1.0.0/snapshots.schema.json). It also ships inside the NuGet package.
 
 To get completion and hover docs, point your config at the schema in one of three ways:
 
@@ -233,8 +228,6 @@ To get completion and hover docs, point your config at the schema in one of thre
 | `$schema` URL _(recommended)_ | Add `"$schema": "https://raw.githubusercontent.com/TheLithiumForge/TheLithium.Imprint/main/schemas/1.0.0/snapshots.schema.json"`. | No, the editor fetches and caches it |
 | `$schema` relative path | Copy `schemas/1.0.0/snapshots.schema.json` out of the package into your repo, then add `"$schema": "./schemas/1.0.0/snapshots.schema.json"`. | Yes |
 | VS Code workspace setting | Map the file name in `.vscode/settings.json` under `json.schemas`. Commit it, and everyone on the repo gets it without a `$schema` line. | With a local copy |
-
-Registering the schema with [SchemaStore](https://www.schemastore.org) would need no setup at all. SchemaStore's catalog ships inside VS Code and Rider. Once `snapshots.config.json` is in that catalog, the file name alone is enough. Registering takes a pull request to the SchemaStore repository, not a code change here. The schema already has the `$id` it needs.
 
 ### `[SnapshotSettings]`
 
@@ -484,8 +477,6 @@ With a manual scope, call `Complete` after all the body and teardown work that s
 The scope also has four read-only properties: `BaselineDirectory`, `BaselineFingerprint`, `ArtifactDirectory` and `EffectiveUpdate`. `EffectiveUpdate` includes the run policy. `Update` is the policy the test asked for.
 
 Separate nested scopes resolve their own settings, and restore the parent when disposed. A helper that shares the active scope doesn't open a new test.
-
-The scope code is in [SnapshotScope.cs](../src/TheLithium.Imprint.Core/Execution/SnapshotScope.cs).
 
 ## Reports and failures
 
