@@ -201,8 +201,6 @@ JSON output escapes only what the format requires, so reviewers see text instead
 
 Escaping never loses information in either direction. A Windows path keeps its backslashes, so `"C:\\temp\\file.txt"` reads back as `C:\temp\file.txt`. A real tab stays different from the two characters `\` and `t`.
 
-Two tests cover the round trip: `JsonSnapshotsKeepReadableTextAndRoundTripEscapedCharacters`, and the separate package consumer in `tests/ExternalConsumer`. Both check the readable form and that the same string comes back intact.
-
 Text snapshots aren't JSON, and they're never escaped. A `.txt` file holds exactly the bytes you captured.
 
 Back to the [README](../README.md).

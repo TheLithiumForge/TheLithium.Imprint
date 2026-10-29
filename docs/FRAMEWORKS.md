@@ -202,6 +202,4 @@ internal static class Program
 
 The MSBuild task instruments any method that reaches a capture, not only methods with a test attribute. So these plain methods get the same lifetime, identity and folder layout as a `[Fact]`.
 
-[`tests/TheLithium.Imprint.Specifications`](../tests/TheLithium.Imprint.Specifications) is a project like this one. CI publishes it as a test executable with `PublishAot=true`, `IlcTreatWarningsAsErrors=true` and `ILLinkTreatWarningsAsErrors=true`, then runs it on Windows, Linux and macOS. The same specification tests also run as normal managed .NET tests.
-
 Back to the [README](../README.md).
