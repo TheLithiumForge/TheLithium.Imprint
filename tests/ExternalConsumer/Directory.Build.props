@@ -7,4 +7,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
+  <!-- The runner writes ImprintPackageVersion from the packed packages, so no version is pinned here. -->
+  <Import Project="ImprintPackageVersion.props" />
 </Project>

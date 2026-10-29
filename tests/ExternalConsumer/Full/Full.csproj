@@ -3,7 +3,7 @@
     <OutputType>Exe</OutputType>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="TheLithium.Imprint" Version="1.0.0" />
+    <PackageReference Include="TheLithium.Imprint" Version="$(ImprintPackageVersion)" />
     <!-- Only the test dispatcher/explicit integration harness opts out. OrdinaryTests.cs uses normal package defaults. -->
     <Compile Update="Program.cs;Scenarios.cs;ConsumerCase.cs" ImprintInstrument="false" />
   </ItemGroup>
