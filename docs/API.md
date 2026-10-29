@@ -1,29 +1,23 @@
-# API overview
+# API
 
-Imprint has two ordinary test operations: capture and compare a value with `AssertSnapshot`, or request an update with `UpdateSnapshot`. Configuration supplies defaults for a project or test and overrides for one capture.
+The Imprint API is two calls that capture a value, plus the options that change how Imprint writes, compares and approves it.
 
-This document describes the current implementation. Examples use `using TheLithium.Imprint;`. The main package supplies generated writers and test lifetimes; the Core package exposes the runtime for explicit integrations.
+You call `AssertSnapshot` to capture a value and compare it with the baseline, or `UpdateSnapshot` to ask for that baseline to be replaced. Configuration gives defaults for a project or a test, and overrides for one capture. The main package gives you generated writers and test lifetimes. The `TheLithium.Imprint.Core` package exposes the runtime for custom runners. Examples use `using TheLithium.Imprint;`.
 
-- [Test APIs](#test-apis)
-- [Configuration APIs](#configuration-apis)
-- [Shared options and reuse](#shared-options-and-reuse)
-- [Writers and comparers](#writers-and-comparers)
-- [Explicit runner APIs](#explicit-runner-apis)
-- [Reports and failures](#reports-and-failures)
-- [Generated and build support](#generated-and-build-support)
+## Capture calls
 
-## Test APIs
+### Calls
 
-### Capture and update
+Each call captures the value right away and acts on it when the test succeeds:
 
-| Call | Purpose |
+| Call | What it does |
 | --- | --- |
-| `value.AssertSnapshot(name: null, options: null)` | Capture now; compare against the baseline when the test body succeeds. |
-| `value.UpdateSnapshot(name: null, options: null)` | Capture now; request creation or replacement of this entry when the test succeeds. |
-| `value.AssertSnapshot(writer, name: null, options: null)` | Capture with an explicit `SnapshotWriter<T>`. |
-| `value.UpdateSnapshot(writer, name: null, options: null)` | Request an update using an explicit writer. |
+| `value.AssertSnapshot(name: null, options: null)` | Captures now. Compares with the baseline when the test body succeeds. |
+| `value.UpdateSnapshot(name: null, options: null)` | Captures now. Asks to create or replace this entry when the test succeeds. |
+| `value.AssertSnapshot(writer, name: null, options: null)` | Captures with a custom `SnapshotWriter<T>`. |
+| `value.UpdateSnapshot(writer, name: null, options: null)` | Asks for an update, using a custom writer. |
 
-These methods return `void`. `T` is inferred from the value's declared type. The compiler supplies the optional `expression` argument for name inference; ordinary calls omit it. The writer overloads take the writer first, followed by the name and options.
+These methods return `void`. `T` is inferred from the value's declared type. The compiler fills in the optional `expression` argument for name inference, so normal calls leave it out. The writer overloads take the writer first, then the name and options.
 
 ```csharp
 [Fact]
@@ -31,121 +25,220 @@ public void CreatesOrder()
 {
     var order = new { Id = "order-123", Total = 42.50m };
 
-    order.AssertSnapshot("order");
-    "Ready for dispatch".AssertSnapshot("message");
+    order.AssertSnapshot("order");                  // writes order.json
+    "Ready for dispatch".AssertSnapshot("message"); // writes message.txt
 }
 ```
 
-Capture is eager. Changing `order` afterwards does not change its captured value. Comparison and approval happen after the method body, including its awaited work and `finally` blocks, succeeds. A later failure abandons all proposed updates. Framework teardown after the method returns is outside that boundary. Catching a capture failure does not make the test eligible to approve snapshots.
+Capture is eager. Changing `order` afterwards doesn't change its captured value.
 
-Names identify files within one test invocation. Supply names without extensions; Imprint chooses `.json` or `.txt`. Without an explicit name, the default is a variable/member name, then `snapshot-1`, `snapshot-2`, and so on. Explicit names must be unique within the test, ignoring case.
+Comparison and approval happen after the method body succeeds, including its awaited work and `finally` blocks. A later failure drops all proposed updates. Framework teardown after the method returns doesn't count, as [Approval](../README.md#approval) shows. If you catch a capture failure, the test still can't approve snapshots.
 
-### Common situations
+Names identify files within one test invocation. Pass names without an extension, and Imprint picks `.json` or `.txt`. Without a name, Imprint uses the variable or member name, then `snapshot-1`, `snapshot-2` and so on. Names you pass must be unique within the test, ignoring case.
 
-| Situation | API or approach |
+The capture methods are in [SnapshotExtensions.cs](../src/TheLithium.Imprint.Core/SnapshotExtensions.cs).
+
+### Common tasks
+
+Each task has one call or approach:
+
+| Task | Call or approach |
 | --- | --- |
-| Capture an object, collection or primitive | `value.AssertSnapshot("value")`. The declared type determines the generated writer. |
-| Capture ordinary text | `text.AssertSnapshot("text")`. A root string uses text by default, even if it looks like JSON. |
+| Capture an object, collection or primitive | `value.AssertSnapshot("value")`. The declared type picks the generated writer. |
+| Capture normal text | `text.AssertSnapshot("text")`. A root string is stored as text by default, even if it looks like JSON. |
 | Capture a string as a JSON string value | `text.AssertSnapshot("text", new() { Format = SnapshotFormat.Json })`. |
-| Capture JSON already produced by the application | `json.AssertSnapshot("response", new() { StringContent = SnapshotStringContent.Json })`. |
+| Capture JSON your app already produced | `json.AssertSnapshot("response", new() { StringContent = SnapshotStringContent.Json })`. |
 | Change formatting or comparison for one capture | Pass a `SnapshotOptions` object. |
-| Omit a volatile field or format one member specially | Project the value before capture, or pass an explicit writer. |
+| Leave out a volatile field, or format one member differently | Capture a smaller view of the value, or pass a custom writer. |
 | Approve one entry | `value.UpdateSnapshot("value")`, subject to the run policy. |
-| Approve the current test, including removal of unused entries | Set `Snapshots.Current.Update = SnapshotUpdate.All` before capture. |
-| Distinguish parameterized test rows | The main package derives a case key from the actual arguments. No additional assertion API is needed. |
-| Capture several outputs from one row or a loop | Give each capture a distinct, stable name. |
+| Approve the current test, including removal of unused entries | Set `Snapshots.Current.Update = SnapshotUpdate.All` before the first capture. |
+| Tell parameterized test rows apart | The main package builds a case key from the argument values. You don't need another call. |
+| Capture several outputs from one row or a loop | Give each capture a different, stable name. |
 
-Changing a parameterized row leaves its old test folder behind; Imprint does not perform project-wide orphan cleanup. See [type support](TYPE-SUPPORT.md) for supported shapes and [framework integration](FRAMEWORKS.md) for lifetime details.
+[Type support](TYPE-SUPPORT.md) lists the supported shapes, and [Test frameworks](FRAMEWORKS.md) covers lifetime details.
 
-## Configuration APIs
+## Configuration
 
-### The configuration layers
+### Layers
 
-| Layer | Surface | Applies to |
+Settings come from seven layers:
+
+| Layer | Where you set it | Applies to |
 | --- | --- | --- |
-| Built-in | Defaults when settings are omitted | Every test. |
-| Project | `snapshots.config.json` | Tests resolving configuration from that project. |
-| Class or method | `[SnapshotSettings]` | Suite/test naming and update policy only. |
-| Test initialization | `SnapshotTestOptions` passed to an explicit runner | One test scope, including identity, storage, limits and preferences. |
-| Active test | Setters on `Snapshots.Current` | Defaults for all captures in the active test; set before its first capture. |
+| Built-in | Defaults when settings are left out | Every test. |
+| Project | `snapshots.config.json` | Tests that read their configuration from that project. |
+| Class or method | `[SnapshotSettings]` | Suite and test naming and update policy only. |
+| Test initialization | `SnapshotTestOptions` passed to a custom runner | One test scope, including identity, storage, limits and preferences. |
+| Active test | Setters on `Snapshots.Current` | Defaults for all captures in the active test. Set them before its first capture. |
 | Assertion | `SnapshotOptions` passed to a capture | That capture and its nested values. |
-| Run environment | `IMPRINT_UPDATE`, `CI`, `IMPRINT_PROJECT_ROOT` | Update-policy enforcement or checkout relocation for the run. |
+| Run environment | `IMPRINT_UPDATE`, `CI`, `IMPRINT_PROJECT_ROOT` | The update policy for the run, or a moved checkout. |
 
-The layers do not all expose the same settings. In particular, attributes only have `Name` and `Update`; `Format` and custom `Comparer` belong to individual assertions. A shared C# options variable has no scope by itself. It takes effect where it is passed or assigned.
+The layers don't all have the same settings. Attributes have only `Name` and `Update`. `Format` and a custom `Comparer` belong to single assertions.
 
-For representation and comparison, specified fields override earlier values in this order:
+A shared C# options variable has no scope by itself. It takes effect where you pass or assign it.
 
-```text
-built-in defaults → project → test initialization → active-test changes → assertion
-```
+For representation and comparison, each field you set overrides the earlier layers, in this order:
 
-`null` fields in C# option records mean inherit. Explicit `false`, zero, and an enum's zero-valued member are real overrides. `StringContent` follows the same scope order as one setting. An assertion override leaves the test defaults and subsequent assertions unchanged. Update policy has its own precedence, described below.
+1. Built-in defaults.
+2. Project.
+3. Test initialization.
+4. Changes to the active test.
+5. Assertion.
+
+A `null` field in a C# options record means inherit. Setting `false`, zero or an enum's zero-valued member is a real override. `StringContent` follows the same order, as one setting. An assertion override leaves the test defaults and later assertions as they were.
+
+Update policy has its own order, as [Update precedence](#update-precedence) describes. The resolution code is in [Settings.cs](../src/TheLithium.Imprint.Core/Configuration/Settings.cs).
 
 ### Built-in defaults
 
-| Concern | Default |
+Each setting has a default:
+
+| Setting | Default |
 | --- | --- |
-| Update | `Missing`: create missing entries after success; fail on changed or unused entries. |
-| Output format | `Auto`: text for a non-null root string without an explicit writer; JSON otherwise. |
-| String interpretation | `Value`: do not guess whether a string contains JSON. |
-| Representation | Enum names with numeric fallback; byte arrays as numbers; string-key dictionaries as objects. |
-| Comparison | Exact numbers, ordered arrays, case-sensitive strings, ignored text line endings, significant trailing whitespace. |
-| Unordered matching limit | 256 elements per array when `IgnoreArrayOrder` is enabled. |
-| Snapshot root | `<project>/__snapshots__`; source-relative directories, suite and test names are appended. |
+| Update | `Missing`. Creates missing entries after success. Fails on changed or unused entries. |
+| Output format | `Auto`. Text for a non-null root string without a custom writer. JSON otherwise. |
+| String content | `Value`. Imprint doesn't guess whether a string holds JSON. |
+| Representation | Enum names with a numeric fallback. Byte arrays as numbers. String-keyed dictionaries as objects. |
+| Comparison | Exact numbers, ordered arrays, case-sensitive strings, line endings ignored in text, trailing whitespace counted. |
+| Unordered matching limit | 256 elements per array when `IgnoreArrayOrder` is on. |
+| Snapshot root | `<project>/__snapshots__`. The source-relative folders and the suite and test names are added below it. |
 | Failure artifacts | `<build artifacts>/imprint/failures`, falling back to `<project>/artifacts/imprint/failures`. |
-| Naming | `NameThenOrder`; framework display names are off. |
+| Naming | `NameThenOrder`. Framework display names are off. |
 | Empty test | Fails if the active scope captures nothing. |
-| Capture limits | Depth 64, 100,000 values, 4 MiB of UTF-8 output per snapshot. |
+| Capture limits | Depth 64, 100,000 values and 4 MiB of UTF-8 output per snapshot. |
 | Lock timeout | 10 seconds. |
 
-There are also fixed limits of 1,024 captures per test and a combined byte budget of the larger of 128 MiB or the configured per-snapshot byte limit.
+Two limits are fixed. A test can have at most 1,024 captures. Its combined byte budget is the larger of 128 MiB and the configured per-snapshot byte limit.
 
-### Project: `snapshots.config.json`
+### Project file
 
-Imprint reads one file at the resolved project root. It does not walk directories and merge multiple configuration files. An absent default file uses built-in defaults. An explicit `SnapshotTestOptions.ConfigurationFile` selects a replacement file and must exist.
+Imprint reads one `snapshots.config.json` at the resolved project root. It doesn't walk folders or merge several files. If the default file doesn't exist, Imprint uses the built-in defaults. `SnapshotTestOptions.ConfigurationFile` selects a replacement file, which must exist.
+
+Every key, with its default:
 
 ```json
 {
   "version": 1,
+
   "update": "missing",
-  "representation": {
-    "enums": "number"
+  "allowEmptyTests": false,
+  "stringContent": "value",
+
+  "files": {
+    "snapshotFolderName": "__snapshots__",
+    "snapshotRootPath": null,
+    "failureArtifactPath": "artifacts/imprint/failures"
   },
+
+  "naming": {
+    "unnamedCaptures": "name-then-order",
+    "useFrameworkDisplayNames": false
+  },
+
+  "representation": {
+    "enums": "name-or-number",
+    "byteArrays": "numbers",
+    "dictionaries": "automatic"
+  },
+
   "comparison": {
-    "ignoreLineEndings": true
+    "numericTolerance": 0,
+    "ignoreArrayOrder": false,
+    "ignoreStringCase": false,
+    "ignoreLineEndings": true,
+    "ignoreTrailingWhitespace": false,
+    "maxUnorderedArrayLength": 256
+  },
+
+  "limits": {
+    "maxNestingDepth": 64,
+    "maxValuesPerSnapshot": 100000,
+    "maxBytesPerSnapshot": 4194304,
+    "lockTimeoutSeconds": 10
   }
 }
 ```
 
-| Key | Values / purpose |
+The top-level keys are:
+
+| Key | Values | Meaning |
+| --- | --- | --- |
+| `$schema` | URL or path | Optional schema reference for your editor. See [Editor support](#editor-support). |
+| `version` | `1` | Defaults to `1` when left out. |
+| `update` | `verify`, `missing`, `all` | Update policy. [Update policies](../README.md#update-policies) describes each one. |
+| `allowEmptyTests` | Boolean | Lets a test that captures nothing pass, instead of failing as a likely mistake. |
+| `stringContent` | `value`, `json` | How root strings are read. Override it per test or assertion when a project captures both kinds. |
+
+The `files` keys control where things are written:
+
+| Key | Values | Meaning |
+| --- | --- | --- |
+| `snapshotFolderName` | A portable single folder name | Folder created next to your test sources to hold the snapshots. Defaults to `__snapshots__`. |
+| `snapshotRootPath` | Project-relative or absolute path | Puts snapshots somewhere else. Replaces the default folder next to the sources. |
+| `failureArtifactPath` | Nonempty project-relative or absolute path | Where expected and received files go when a test fails. Must be outside the snapshot root. |
+
+The `naming` keys control how folders and files get their names:
+
+| Key | Values | Meaning |
+| --- | --- | --- |
+| `unnamedCaptures` | `name-then-order`, `order`, `explicit-only` | File name for a capture without a name. `name-then-order` uses the variable name, else `snapshot-1`. `order` always uses `snapshot-1`. `explicit-only` requires a name every time. |
+| `useFrameworkDisplayNames` | Boolean | Names the test folder after the framework display name, such as `[Fact(DisplayName = "...")]`, instead of the method name, when one exists. |
+
+The `representation` keys set the defaults for each category, as [Representation](#representation) describes:
+
+| Key | Values |
 | --- | --- |
-| `$schema` | Optional editor schema reference. See the [versioned schema](../schemas/1.0.0/snapshots.schema.json). |
-| `version` | `1`; defaults to 1 when omitted. |
-| `update` | `verify`, `missing`, `all`. |
-| `allowEmptyTests` | Boolean; permits a test scope with no captures. |
-| `stringContent` | `value` or `json`, for root strings. |
-| `files.snapshotFolderName` | Portable single folder name; defaults to `__snapshots__`. |
-| `files.snapshotRootPath` | Optional project-relative or absolute replacement snapshot root. |
-| `files.failureArtifactPath` | Optional nonempty project-relative or absolute failure-artifact root. |
-| `naming.unnamedCaptures` | `name-then-order`, `order`, or `explicit-only`. |
-| `naming.useFrameworkDisplayNames` | Boolean; opt into generated framework display metadata for the test folder. |
-| `representation.enums` | `name-or-number` or `number`. |
-| `representation.byteArrays` | `numbers` or `base64`. |
-| `representation.dictionaries` | `automatic` or `entries`. |
-| `comparison.numericTolerance` | Nonnegative decimal; default `0`. |
-| `comparison.ignoreArrayOrder` | Boolean; default `false`. |
-| `comparison.ignoreStringCase` | Boolean; default `false`. |
-| `comparison.ignoreLineEndings` | Boolean; default `true`. |
-| `comparison.ignoreTrailingWhitespace` | Boolean; default `false`. |
-| `comparison.maxUnorderedArrayLength` | Integer from 1 to 1,024; default 256. |
-| `limits.maxNestingDepth` | Integer from 1 to 256. |
-| `limits.maxValuesPerSnapshot` | Integer from 1 to 10,000,000. |
-| `limits.maxBytesPerSnapshot` | Integer from 1 to 268,435,456 (256 MiB). |
-| `limits.lockTimeoutSeconds` | Integer from 1 to 300. |
+| `enums` | `name-or-number`, `number` |
+| `byteArrays` | `numbers`, `base64` |
+| `dictionaries` | `automatic`, `entries` |
 
-Omitted values inherit defaults. JSON settings use the documented types rather than the nullable C# patch convention. Explicit nulls are rejected except for `files.snapshotRootPath`. Unknown keys, duplicate keys, unsupported enum values and invalid limits fail configuration, even if a narrower setting would replace them. Snapshot, artifact and recovery directories must be separate and may not contain one another.
+The `comparison` keys hold the same six rules as [Comparison](#comparison):
 
-### Class and method: `[SnapshotSettings]`
+| Key | Values |
+| --- | --- |
+| `numericTolerance` | Nonnegative decimal |
+| `ignoreArrayOrder` | Boolean |
+| `ignoreStringCase` | Boolean |
+| `ignoreLineEndings` | Boolean |
+| `ignoreTrailingWhitespace` | Boolean |
+| `maxUnorderedArrayLength` | Integer from 1 to 1,024 |
+
+The `limits` keys are the safety valves. Raise one only when a valid snapshot hits it:
+
+| Key | Values | Meaning |
+| --- | --- | --- |
+| `maxNestingDepth` | Integer from 1 to 256 | Deepest object or array nesting that's serialized. |
+| `maxValuesPerSnapshot` | Integer from 1 to 10,000,000 | Most values one capture can visit. Catches runaway graphs. |
+| `maxBytesPerSnapshot` | Integer from 1 to 268,435,456 (256 MiB) | Largest single snapshot file, in UTF-8 bytes. |
+| `lockTimeoutSeconds` | Integer from 1 to 300 | How long to wait for another process to release the snapshot folder lock. |
+
+The file follows these rules:
+
+- Keys you leave out inherit the defaults.
+- JSON settings use the types above, not the nullable C# patch convention. `null` is rejected, except for `files.snapshotRootPath`.
+- Unknown keys, duplicate keys, wrong types, unsupported enum values and invalid limits fail configuration. Invalid project settings are rejected even when a narrower setting overrides them.
+- Only the current key names work. Historical aliases aren't supported.
+- The snapshot, artifact and recovery folders must be separate, as [Storage](../README.md#storage) describes.
+
+The reader is in [ProjectConfigurationReader.cs](../src/TheLithium.Imprint.Core/Configuration/ProjectConfigurationReader.cs).
+
+### Editor support
+
+The keys above are described by [`schemas/1.0.0/snapshots.schema.json`](../schemas/1.0.0/snapshots.schema.json). The schema ships inside the NuGet package and is published in this repository. `ConfigurationSchemaTests` checks it against the reader, so it lists exactly the keys the reader accepts.
+
+To get completion and hover docs, point your config at the schema in one of three ways:
+
+| How | Setup | Works offline |
+| --- | --- | --- |
+| `$schema` URL _(recommended)_ | Add `"$schema": "https://raw.githubusercontent.com/TheLithiumForge/TheLithium.Imprint/main/schemas/1.0.0/snapshots.schema.json"`. | No, the editor fetches and caches it |
+| `$schema` relative path | Copy `schemas/1.0.0/snapshots.schema.json` out of the package into your repo, then add `"$schema": "./schemas/1.0.0/snapshots.schema.json"`. | Yes |
+| VS Code workspace setting | Map the file name in `.vscode/settings.json` under `json.schemas`. Commit it, and everyone on the repo gets it without a `$schema` line. | With a local copy |
+
+Registering the schema with [SchemaStore](https://www.schemastore.org) would need no setup at all. SchemaStore's catalog ships inside VS Code and Rider. Once `snapshots.config.json` is in that catalog, the file name alone is enough. Registering takes a pull request to the SchemaStore repository, not a code change here. The schema already has the `$id` it needs.
+
+### `[SnapshotSettings]`
+
+You can put `[SnapshotSettings]` on a class or a method:
 
 ```csharp
 [SnapshotSettings(Name = "Orders", Update = SnapshotUpdate.Missing)]
@@ -155,123 +248,161 @@ public sealed class OrderTests
     [SnapshotSettings(Name = "NewOrder", Update = SnapshotUpdate.Verify)]
     public void CreatesOrder()
     {
-        new { Id = 123 }.AssertSnapshot("order");
+        new { Id = 123 }.AssertSnapshot("order"); // writes .../Orders/NewOrder/order.json
     }
 }
 ```
 
+The attribute has two properties:
+
 | Property | On a class | On a method |
 | --- | --- | --- |
-| `Name` | Suite folder name. | Test folder name. |
-| `Update` | Default update policy for its tests. | Overrides the class policy when not `Inherit`. |
+| `Name` | Suite folder name. Defaults to the class name. | Test folder name. Defaults to the method name. |
+| `Update` | Default update policy for its tests. | Overrides the class policy when it isn't `Inherit`. |
 
-These attributes do not configure representation, comparison or capture limits. A direct method attribute can also establish the generated lifetime when a capture is reached indirectly, such as through a delegate. A class attribute supplies settings to discovered tests; it does not wrap every method in the class.
+These attributes don't set representation, comparison or capture limits.
 
-### Active test: `Snapshots.Current`
+An attribute on the method also sets up the generated lifetime when a capture is reached indirectly, e.g. through a delegate. An attribute on a class gives settings to discovered tests. It doesn't wrap every method in the class.
 
-| Writable property | Behavior |
+### `Snapshots.Current`
+
+`Snapshots.Current` is the active test's scope. You can set four properties on it:
+
+| Property | What it does |
 | --- | --- |
-| `Update` | Set the whole-test update policy. `Inherit` restores the policy selected when the scope began. |
-| `Representation` | Merge specified enum, byte-array and dictionary preferences into the current defaults. |
-| `Comparison` | Merge specified comparison fields into the current defaults. |
-| `StringContent` | Set root-string interpretation for the test. |
+| `Update` | Sets the whole-test update policy. `Inherit` restores the policy chosen when the scope began. |
+| `Representation` | Merges the enum, byte-array and dictionary preferences you set into the current defaults. |
+| `Comparison` | Merges the comparison fields you set into the current defaults. |
+| `StringContent` | Sets how root strings are read for the test. |
 
-Set these before the first capture. Later assignments fail. Representation and comparison getters return the effective values, including inherited defaults. Repeated partial assignments preserve fields that are not specified. Settings belong to the current asynchronous test scope; concurrent tests have their own scopes.
+Set these before the first capture. Later assignments fail.
 
-`Snapshots.UpdateCurrentTest(update = SnapshotUpdate.All)` is a convenience for assigning `Snapshots.Current.Update`.
+The `Representation` and `Comparison` getters return the values in effect, including inherited defaults. Repeated partial assignments keep the fields you don't set. Settings belong to the current asynchronous test scope, so concurrent tests have their own scopes.
 
-For preferences shared by a test class, define a `static readonly` options record and assign it at the beginning of each test, directly or through a helper. Merely declaring the field does not register suite defaults.
+`Snapshots.UpdateCurrentTest(update = SnapshotUpdate.All)` is a shortcut for assigning `Snapshots.Current.Update`.
 
-### Assertion: `SnapshotOptions`
+To share preferences across a test class, define a `static readonly` options record. Assign it at the start of each test, directly or through a helper. Declaring the field alone doesn't register suite defaults.
 
-| Property | Default / scope |
+### `SnapshotOptions`
+
+`SnapshotOptions` changes one capture:
+
+| Property | Default and scope |
 | --- | --- |
-| `Update` | `Inherit`; an explicit policy affects this entry only. `UpdateSnapshot` always requests `All` for the entry. |
-| `Format` | `Auto`; selects JSON or text for this capture. For strings, `Json` writes a quoted JSON string value; use `StringContent = Json` to capture a parsed JSON document. |
-| `StringContent` | `null` inherits the test's root-string interpretation. |
-| `Representation` | `null` inherits test preferences; a supplied record replaces only specified categories. |
-| `Comparison` | `null` inherits test comparison; a supplied record replaces only specified fields. |
-| `Comparer` | `null` uses `DefaultSnapshotComparer`; otherwise use the supplied `ISnapshotComparer`. |
+| `Update` | `Inherit`. A policy you set affects this entry only. `UpdateSnapshot` always asks for `All` for the entry. |
+| `Format` | `Auto`. Selects JSON or text for this capture. For strings, `Json` writes a quoted JSON string value. To capture a parsed JSON document, use `StringContent = Json`. |
+| `StringContent` | `null` inherits the test's setting for root strings. |
+| `Representation` | `null` inherits the test preferences. A record you pass replaces only the categories it sets. |
+| `Comparison` | `null` inherits the test comparison. A record you pass replaces only the fields it sets. |
+| `Comparer` | `null` uses `DefaultSnapshotComparer`. Otherwise Imprint uses the `ISnapshotComparer` you pass. |
 
-`Format = Json` treats an ordinary string as a JSON string value. `StringContent = Json` instead accepts an already serialized JSON document, validates it and preserves the supplied text. It accepts JSON objects, arrays and scalar roots, requires a non-null string, and is incompatible with `Format = Text` or an explicit writer. Text format requires a non-null string; explicitly selecting it writes that string directly and bypasses any supplied JSON writer. Null values normally capture as JSON `null`.
+`Format = Json` treats a normal string as a JSON string value.
 
-Representation preferences affect generated and built-in serialization. They do not reinterpret text, rewrite an existing JSON document, or force custom writers to change their output.
+`StringContent = Json` takes a JSON document that's already serialized. Imprint checks it and keeps the text as you gave it. It accepts JSON objects, arrays and scalar roots. It needs a non-null string, and it can't be combined with `Format = Text` or a custom writer.
 
-### Explicit test initialization: `SnapshotTestOptions`
+Text format needs a non-null string. If you select it, Imprint writes that string directly and skips any JSON writer you passed. A null value is normally captured as JSON `null`.
 
-Pass this record to `Snapshots.Run`, `RunAsync` or `Begin`. It configures a test scope when integrating an explicit runner; ordinary tests generally use project settings, attributes and `Snapshots.Current`.
+Representation preferences affect generated and built-in serialization. They don't reread text, rewrite a JSON document you gave or change a custom writer's output.
 
-| Properties | Purpose |
+### `SnapshotTestOptions`
+
+`SnapshotTestOptions` configures a test scope from a custom runner. Pass it to `Snapshots.Run`, `RunAsync` or `Begin`. Normal tests use the project file, attributes and `Snapshots.Current` instead.
+
+| Properties | What they set |
 | --- | --- |
-| `Update` | Initial test policy; `Inherit` uses generated method/class policy, then project settings. |
-| `Representation`, `Comparison`, `StringContent` | Initial test preferences over project settings. |
-| `Name`, `Suite` | Explicit test/suite names over the resolved identity. With generated identity, an enabled framework display name is selected during settings resolution; an explicit `Identity` bypasses that display-name selection. |
-| `Case`, `Variant` | Case and target/configuration discriminators over the resolved identity. |
-| `Identity` | A `SnapshotTestIdentity` for a custom runner or relocated executable; bypasses generated source identity. |
-| `RootDirectory` | Replacement snapshot root; source directory, suite and test are still appended. |
+| `Update` | The starting test policy. `Inherit` uses the generated method or class policy, then the project file. |
+| `Representation`, `Comparison`, `StringContent` | The starting test preferences, over the project file. |
+| `Name`, `Suite` | Test and suite names, over the resolved identity. With a generated identity, an enabled framework display name is chosen while settings resolve. An `Identity` you pass skips that display-name step. |
+| `Case`, `Variant` | Case, and a label for each target or configuration, over the resolved identity. |
+| `Identity` | A `SnapshotTestIdentity` for a custom runner or a moved executable. Skips the generated source identity. |
+| `RootDirectory` | Replacement snapshot root. The source folder, suite and test are still added below it. |
 | `ArtifactDirectory` | Replacement failure-artifact root. |
-| `ConfigurationFile` | Select a required project configuration file; relative paths are project-relative. |
-| `Naming` | `NameThenOrder`, `Order`, or `ExplicitOnly` for capture filenames. |
-| `AllowEmpty` | Allow no captures. Combined with whole-test `All`, this can remove the test's existing entries. |
-| `MaxNestingDepth`, `MaxValuesPerSnapshot`, `MaxBytesPerSnapshot` | Override the three project capture limits, using the same ranges. |
-| `CancellationToken` | Cancel Imprint-owned capture, comparison and lock-wait work. Custom callbacks are not interrupted or passed the token. An active storage transaction completes or rolls back. |
+| `ConfigurationFile` | Selects a project config file, which must exist. Relative paths are project-relative. |
+| `Naming` | `NameThenOrder`, `Order` or `ExplicitOnly`, for capture file names. |
+| `AllowEmpty` | Allows a test with no captures. Combined with a whole-test `All`, this can remove the test's existing entries. |
+| `MaxNestingDepth`, `MaxValuesPerSnapshot`, `MaxBytesPerSnapshot` | Override the three project capture limits, with the same ranges. |
+| `CancellationToken` | Cancels the capture, comparison and lock-wait work Imprint does itself. Custom callbacks aren't interrupted or given the token. A storage transaction in progress completes or rolls back. |
 
-Nullable properties inherit when omitted. There is no per-test `Format`, custom `Comparer`, or lock-timeout property. Format and custom equality belong to captures, and lock timeout belongs to project configuration.
+Nullable properties inherit when you leave them out. There's no per-test `Format`, custom `Comparer` or lock timeout. Format and custom equality belong to captures. Lock timeout belongs to the project file.
 
-### Run environment and update precedence
+### Run environment
+
+Almost everything is configured through the typed API: `[SnapshotSettings]`, `SnapshotOptions` and `snapshots.config.json`. Two things can't be, so Imprint reads them from the environment:
 
 | Variable | Meaning |
 | --- | --- |
-| `IMPRINT_UPDATE` | `verify`, `missing`, or `all` for the run; takes precedence over every test and assertion policy. |
-| `CI` | When true/1 and no `IMPRINT_UPDATE` is supplied, enforces run-wide `Verify`. False/0 or unset/blank does not. |
-| `IMPRINT_PROJECT_ROOT` | Existing absolute project directory for checkout relocation. Overrides the root carried by generated or explicit identity. |
+| `IMPRINT_UPDATE` | `verify`, `missing` or `all` for the run. Wins over every test and assertion policy. |
+| `IMPRINT_PROJECT_ROOT` | An existing absolute project folder, for a moved checkout. Overrides the root carried by a generated or passed identity. |
 
-These inputs are read when a scope begins. There is no separate Imprint CLI or automatic `.runsettings` integration.
+Each one has its reason:
 
-For each entry, the first applicable update policy wins:
+- `IMPRINT_UPDATE` - approving a change shouldn't need you to edit a committed file, then revert it. If you forget to revert `"update": "all"`, your whole suite stops checking anything without a warning. Imprint has no runner adapter, so no command-line flag or `.runsettings` value can reach it.
+- `IMPRINT_PROJECT_ROOT` - the project path is baked in at compile time. This variable points it somewhere else when the tests run in a different place than they were built. E.g. you build in one container and test in another. It describes the environment, not a policy.
 
-1. Explicit `IMPRINT_UPDATE`.
-2. `Verify` when CI is enabled.
-3. Assertion `Update`, including the `All` requested by `UpdateSnapshot`.
-4. The active test policy: an explicit scope assignment, otherwise `SnapshotTestOptions.Update`, otherwise generated method/class policy, otherwise the project policy.
-5. Built-in `Missing`.
+Imprint also reads `CI`, which your CI provider sets for you. When it's `true` or `1` and `IMPRINT_UPDATE` isn't set, the run uses `Verify`. `false`, `0`, unset or blank doesn't.
 
-| Effective policy | Missing entry | Different entry | Unused entry |
+Imprint reads these variables when a scope begins. The normal `dotnet test` reads them. There's no separate Imprint command or automatic `.runsettings` integration.
+
+### Update precedence
+
+For each entry, the first update policy that applies wins:
+
+1. `IMPRINT_UPDATE`, if set.
+2. `Verify`, when CI is on.
+3. The assertion's `Update`, including the `All` that `UpdateSnapshot` asks for.
+4. The active test policy. That's a scope assignment, then `SnapshotTestOptions.Update`, then the generated method or class policy, then the project policy.
+5. The built-in `Missing`.
+
+Each policy handles the three kinds of entry like this:
+
+| Policy | Missing entry | Different entry | Unused entry |
 | --- | --- | --- | --- |
 | `Verify` | Fail | Fail | Fail |
 | `Missing` | Create after success | Fail | Fail |
-| `All` | Create after success | Replace after success | Remove only when `All` applies to the whole test |
+| `All` | Create after success | Replace after success | Remove, only when `All` applies to the whole test |
 
-Unused entries are evaluated against the whole-test policy. A single `UpdateSnapshot` does not approve pruning. A narrower assertion can override a project or test `Verify`, but cannot override a run-wide `Verify`. Run-wide verification also refuses interrupted baseline recovery; locks and failure diagnostics can still write. All proposed baseline changes require successful completion and an authorized result for the entire test.
+Unused entries follow the whole-test policy, so a single `UpdateSnapshot` doesn't approve pruning. An assertion can override a project or test `Verify`, but not a run-wide `Verify`.
 
-## Shared options and reuse
+A run-wide `Verify` also refuses to recover an interrupted baseline. Locks and failure diagnostics can still write.
 
-### Representation: `SnapshotRepresentationOptions`
+Every proposed baseline change needs the whole test to complete successfully, with an allowed result.
 
-| Property / enum type | Choices | Built-in default |
+## Shared options
+
+### Representation
+
+`SnapshotRepresentationOptions` sets how three categories of value are written:
+
+| Property and enum type | Choices | Default |
 | --- | --- | --- |
-| `Enums` / `SnapshotEnumRepresentation` | `NameOrNumber`: exact declared name, otherwise underlying number. `Number`: always the underlying number. | `NameOrNumber` |
-| `ByteArrays` / `SnapshotByteArrayRepresentation` | `Numbers`: JSON numeric array. `Base64`: JSON base64 string. | `Numbers` |
-| `Dictionaries` / `SnapshotDictionaryRepresentation` | `Automatic`: string keys as object properties, other keys as entry arrays. `Entries`: arrays of `{ "Key": ..., "Value": ... }`. | `Automatic` |
+| `Enums` / `SnapshotEnumRepresentation` | `NameOrNumber` - the exact declared name, otherwise the underlying number. `Number` - always the underlying number. | `NameOrNumber` |
+| `ByteArrays` / `SnapshotByteArrayRepresentation` | `Numbers` - a JSON array of numbers. `Base64` - a JSON base64 string. | `Numbers` |
+| `Dictionaries` / `SnapshotDictionaryRepresentation` | `Automatic` - string keys as object properties, other keys as entry arrays. `Entries` - arrays of `{ "Key": ..., "Value": ... }`. | `Automatic` |
 
-Each preference applies throughout a capture, including nested values. Enum flags combinations are not expanded into names unless the combined value has an exact declared name. Both byte-array choices are JSON representations, not binary snapshot files. Representation settings do not change parameterized case identity.
+Each preference applies to the whole capture, including nested values. All matching values in the capture use the same preference.
 
-### Comparison: `SnapshotComparison`
+Enum flag combinations aren't expanded into names, unless the combined value has an exact declared name. Both byte-array choices are JSON, not binary snapshot files. Representation settings don't change the case identity of parameterized tests.
 
-| Property | Meaning | Built-in default |
+### Comparison
+
+`SnapshotComparison` holds the equality rules. They decide when two snapshots count as equal:
+
+| Property | Meaning | Default |
 | --- | --- | --- |
-| `NumericTolerance` | Maximum absolute decimal difference accepted between JSON numbers; must be nonnegative. | `0` |
-| `IgnoreArrayOrder` | Match JSON array elements without order; duplicates still count. | `false` |
-| `IgnoreStringCase` | Ordinal case-insensitive string comparison; JSON property names remain case-sensitive. | `false` |
-| `IgnoreLineEndings` | Treat CRLF and LF as equal in text snapshots. | `true` |
-| `IgnoreTrailingWhitespace` | Ignore trailing spaces and tabs on each text line. | `false` |
-| `MaxUnorderedArrayLength` | Bound unordered matching to arrays of this length; range 1 to 1,024. | `256` |
+| `NumericTolerance` | Largest absolute decimal difference accepted between two JSON numbers. Must be nonnegative. Meant for floats. | `0` |
+| `IgnoreArrayOrder` | Matches JSON array elements in any order. Duplicates still have to appear the same number of times. | `false` |
+| `IgnoreStringCase` | Compares string values with ordinal case-insensitive comparison. JSON property names stay case-sensitive. | `false` |
+| `IgnoreLineEndings` | Treats CRLF and LF as equal in text snapshots. Keep this on for cross-platform repos. | `true` |
+| `IgnoreTrailingWhitespace` | Ignores spaces and tabs at the end of each text line. | `false` |
+| `MaxUnorderedArrayLength` | Longest array `IgnoreArrayOrder` tries to match, to limit the cost. Range 1 to 1,024. | `256` |
 
-Comparison settings decide equality; they do not transform the stored output. JSON comparison is structural and ignores formatting and object-property order. See [type support](TYPE-SUPPORT.md) for numeric boundaries.
+`IgnoreArrayOrder` uses real multiset matching, not a greedy pass. So it stays correct when combined with `NumericTolerance`.
 
-### Reuse defaults, then override one capture
+These rules never change what's written to disk. The stored file is always the exact captured value. JSON comparison is structural, so it ignores formatting and the order of object properties. [Type support](TYPE-SUPPORT.md#built-in) covers the numeric limits.
 
-`SnapshotRepresentationOptions`, `SnapshotComparison`, `SnapshotOptions` and `SnapshotTestOptions` are records with initialization-only settings. Reuse them directly or derive a copy with C# `with`; no builder or freeze operation is needed.
+### Reuse options
+
+`SnapshotRepresentationOptions`, `SnapshotComparison`, `SnapshotOptions` and `SnapshotTestOptions` are records with init-only settings. Reuse them as they are, or copy one with C# `with`. You don't need a builder or a freeze step.
 
 ```csharp
 private static readonly SnapshotRepresentationOptions Defaults = new()
@@ -288,93 +419,129 @@ public void CapturesOrderAndReceipt()
     var order = new { Id = "order-123", Status = OrderStatus.Shipped };
     var receipt = new { order.Id, order.Status };
 
-    order.AssertSnapshot("order");
+    order.AssertSnapshot("order");              // "Status": 1
     receipt.AssertSnapshot("receipt", new()
     {
         Representation = Defaults with
         {
             Enums = SnapshotEnumRepresentation.NameOrNumber
         }
-    });
-    order.AssertSnapshot("order-again");
+    });                                         // "Status": "Shipped"
+    order.AssertSnapshot("order-again");        // "Status": 1
 }
 
 public enum OrderStatus { Pending, Shipped }
 ```
 
-The order captures use status `1`; the receipt uses `"Shipped"`. All retain entry-array dictionary preferences. `Defaults` and the test defaults stay unchanged. If defaults have already been installed on the test, the assertion may instead supply only `new() { Enums = SnapshotEnumRepresentation.NameOrNumber }` and inherit everything else.
+All three captures keep the entry-array dictionary preference. `Defaults` and the test defaults stay as they were.
 
-For defaults used only by selected captures, pass the shared record through `SnapshotOptions.Representation` directly instead of assigning it to the active test.
+If the test already has the defaults installed, the assertion can pass only `new() { Enums = SnapshotEnumRepresentation.NameOrNumber }` and inherit the rest.
+
+To use shared defaults for only some captures, pass the record through `SnapshotOptions.Representation` instead of assigning it to the active test.
 
 ## Writers and comparers
 
-| API | Role |
+A custom writer changes how one value is serialized, and a custom comparer changes how two snapshots are compared:
+
+| API | What it does |
 | --- | --- |
-| `SnapshotWriter<T>` | Delegate receiving `Utf8JsonWriter`, the non-null value, and `SnapshotWriteContext`. Write exactly one JSON value and leave the writer open. |
-| Writer overloads of `AssertSnapshot` / `UpdateSnapshot` | Customize serialization for one capture. Null bypasses the delegate and writes JSON null. |
-| `SnapshotWriters.Register<T>(writer)` | Replace the writer for a declared type globally. Register during startup before concurrent tests. |
-| `SnapshotWriters.Write(writer, value, context)` | Delegate nested writing to an existing generated, built-in or registered writer while retaining context. |
-| `[assembly: SnapshotInclude<MyType>]` | Request generation for a concrete type reached only through a generic helper. |
-| `SnapshotWriteContext.Representation` | Read `ResolvedSnapshotRepresentation`, the concrete read-only enum, byte-array and dictionary preferences. |
-| `SnapshotWriteContext.Path` | Current JSON-style path, initially `$`. |
-| `SnapshotWriteContext.At(member)` / `At(index)` | Push a member/index path; disposing the returned frame restores the previous path. |
-| `ISnapshotComparer.Compare(expected, received, format, options)` | Custom equality for already captured text. Receives `ResolvedSnapshotComparison`, whose fields are non-nullable, and a resolved format. |
-| `SnapshotComparisonResult` | `Equal` and optional `Difference`; `Match` is a reusable successful result. |
-| `DefaultSnapshotComparer.Instance` | The built-in comparer, also usable when composing custom equality. Pass the received `ResolvedSnapshotComparison`, or construct one with concrete rules; omitted fields use built-in defaults. |
+| `SnapshotWriter<T>` | Delegate that gets a `Utf8JsonWriter`, the non-null value and a `SnapshotWriteContext`. Write exactly one JSON value and leave the writer open. |
+| Writer overloads of `AssertSnapshot` and `UpdateSnapshot` | Change serialization for one capture. A null value skips the delegate and writes JSON `null`. |
+| `SnapshotWriters.Register<T>(writer)` | Replaces the writer for a declared type everywhere. Register it at startup, before tests run in parallel. |
+| `SnapshotWriters.Write(writer, value, context)` | Passes nested writing to an existing generated, built-in or registered writer, and keeps the context. |
+| `[assembly: SnapshotInclude<MyType>]` | Asks the generator to build a writer for a concrete type reached only through a generic helper. |
+| `SnapshotWriteContext.Representation` | Gives the `ResolvedSnapshotRepresentation`, the concrete read-only enum, byte-array and dictionary preferences. |
+| `SnapshotWriteContext.Path` | The current JSON-style path. Starts at `$`. |
+| `SnapshotWriteContext.At(member)` and `At(index)` | Push a member or index onto the path. Disposing the returned frame restores the previous path. |
+| `ISnapshotComparer.Compare(expected, received, format, options)` | Custom equality for text that's already captured. Gets a `ResolvedSnapshotComparison`, whose fields are non-nullable, and a resolved format. |
+| `SnapshotComparisonResult` | `Equal` and an optional `Difference`. `Match` is a reusable successful result. |
+| `DefaultSnapshotComparer.Instance` | The built-in comparer. You can also use it inside your own comparer. Pass it the `ResolvedSnapshotComparison` you got, or build one with concrete rules. Fields you leave out use the built-in defaults. |
 
-Custom writers own their output; they can consult `context.Representation` when useful. Custom comparers must be deterministic and safe for concurrent use. A custom comparer cannot change the saved representation. Explicit writer registration still selects by declared type; it is an extension for serialization behavior rather than an additional configuration layer.
+A custom writer handles its own output. It can read `context.Representation` when that helps. Registering a writer still selects it by declared type. It extends serialization, and isn't another configuration layer.
 
-## Explicit runner APIs
+A custom comparer must be deterministic and safe to call from several threads at once. It can't change the saved format.
 
-| API | Result / lifecycle |
+## Custom runner API
+
+A custom runner opens a scope for each test, as [Custom runners](FRAMEWORKS.md#custom-runners) shows. It uses these calls:
+
+| API | What it returns or does |
 | --- | --- |
-| `Snapshots.Run(Action body, options: null)` | Runs a synchronous body and completes the scope; returns `SnapshotReport`. |
-| `Snapshots.RunAsync(Func<Task> body, options: null)` | Awaits the body and completes; returns `Task<SnapshotReport>`. |
-| `Snapshots.Begin(options: null)` | Returns a `SnapshotScope` for manual lifetime management. |
-| `Snapshots.Current` | Returns the active scope in this asynchronous context; throws if none exists. |
-| `scope.Complete()` | Compares all captures and commits authorized changes; returns `SnapshotReport` or throws. |
-| `scope.Abort(error: null)` | Abandons approval and attempts to preserve failure diagnostics. |
-| `scope.Dispose()` | Abandons an incomplete scope and restores its parent; never approves. |
+| `Snapshots.Run(Action body, options: null)` | Runs a synchronous body and completes the scope. Returns a `SnapshotReport`. |
+| `Snapshots.RunAsync(Func<Task> body, options: null)` | Awaits the body and completes the scope. Returns `Task<SnapshotReport>`. |
+| `Snapshots.Begin(options: null)` | Returns a `SnapshotScope` you manage yourself. |
+| `Snapshots.Current` | Returns the active scope in this asynchronous context. Throws if there's none. |
+| `scope.Complete()` | Compares all captures and commits the allowed changes. Returns a `SnapshotReport`, or throws. |
+| `scope.Abort(error: null)` | Gives up approval and tries to keep the failure diagnostics. |
+| `scope.Dispose()` | Gives up an incomplete scope and restores its parent. Never approves. |
 
-`Run`, `RunAsync` and `Begin` also accept compiler-supplied `sourceFile` and `sourceLine` arguments. Ordinary callers omit them. `Run(Func<Task>)` is an obsolete-error overload that deliberately rejects asynchronous callbacks; use `RunAsync`.
+`Run`, `RunAsync` and `Begin` also take `sourceFile` and `sourceLine` arguments that the compiler fills in. Normal callers leave them out. `Run(Func<Task>)` is an overload marked obsolete as an error, so an async callback fails to compile. Use `RunAsync` for it.
 
-`SnapshotTestIdentity` requires `ProjectDirectory`, `SourceFile`, `Suite` and `Test`. It optionally accepts `Case`, `Variant` and `LogicalId`. Core-only integrations need an explicit identity and built-in or explicit writers. The main package usually supplies both identity and writers during compilation.
+`SnapshotTestIdentity` needs `ProjectDirectory`, `SourceFile`, `Suite` and `Test`. It can also take `Case`, `Variant` and `LogicalId`. A runner that uses only the Core package needs to pass an identity, and to use built-in or custom writers. The main package usually gives you both the identity and the writers at compile time.
 
-Manual scopes must call `Complete` after all body and teardown work that should influence approval. On failure, call `Abort(error)` and rethrow the original exception. Prefer `Run`/`RunAsync` when a callback can express that boundary. See the [runner example](../README.md#custom-runners).
+With a manual scope, call `Complete` after all the body and teardown work that should affect approval. On failure, call `Abort(error)` and rethrow the original exception. If a callback can hold that whole span, use `Run` or `RunAsync` instead.
 
-Read-only scope properties are `BaselineDirectory`, `BaselineFingerprint`, `ArtifactDirectory`, and `EffectiveUpdate`. The last includes run-policy enforcement; `Update` is the test's requested policy. Separate explicit nested scopes resolve their own settings and restore the parent when disposed; sharing an ambient scope in a helper does not open a new test.
+The scope also has four read-only properties: `BaselineDirectory`, `BaselineFingerprint`, `ArtifactDirectory` and `EffectiveUpdate`. `EffectiveUpdate` includes the run policy. `Update` is the policy the test asked for.
+
+Separate nested scopes resolve their own settings, and restore the parent when disposed. A helper that shares the active scope doesn't open a new test.
+
+The scope code is in [SnapshotScope.cs](../src/TheLithium.Imprint.Core/Execution/SnapshotScope.cs).
 
 ## Reports and failures
 
-| Type | Information |
+A mismatch throws `SnapshotMismatchException`, which carries a structured `Report`:
+
+```csharp
+catch (SnapshotMismatchException e)
+{
+    foreach (var entry in e.Report.Entries)
+    {
+        // entry.Name, entry.FileName, entry.Status, entry.Difference
+    }
+}
+```
+
+The report is made of these types:
+
+| Type | What it holds |
 | --- | --- |
-| `SnapshotReport` | `Test`, `Success`, `Entries`, optional `ArtifactDirectory` and `ArtifactError`. Returned by successful explicit completion and attached to a mismatch exception. |
-| `SnapshotEntryResult` | `Name`, `FileName`, `Status`, optional `Difference`. |
-| `SnapshotStatus` | `Matched`, `Missing`, `Changed`, `Unused`, `Created`, `Updated`, `Removed`. |
-| `SnapshotException` | Base exception for Imprint failures. |
-| `SnapshotMismatchException` | The completed comparison set failed; inspect `Report`. |
-| `SnapshotConfigurationException` | Invalid options, missing lifetime/identity, or invalid lifecycle use. |
-| `SnapshotCaptureException` | A value could not be captured, exceeded a budget, or an earlier capture failure prevents completion. |
-| `SnapshotConflictException` | Conflicting baseline ownership, concurrent changes or ambiguous stored state. |
+| `SnapshotReport` | `Test`, `Success`, `Entries`, and an optional `ArtifactDirectory` and `ArtifactError`. A successful `Complete` returns it, and a mismatch exception carries it. |
+| `SnapshotEntryResult` | `Name`, `FileName`, `Status` and an optional `Difference`. |
+| `SnapshotStatus` | `Matched`, or a failure: `Missing`, `Changed`, `Unused`. Or an approval: `Created`, `Updated`, `Removed`. |
 
-Standard argument and cancellation exceptions can also propagate. Diagnostic write failures preserve the primary error. An aborted test may attach diagnostic information to the original exception's `Data` under `TheLithium.Imprint.Artifacts` or `TheLithium.Imprint.ArtifactError`.
+All Imprint exceptions derive from `SnapshotException`:
 
-## Generated and build support
-
-These members are public so generated code in a consuming assembly can call them. They belong to the implementation support surface, not ordinary test setup.
-
-| Surface | Purpose |
+| Exception | Thrown when |
 | --- | --- |
-| `Generation.TestExecution.Run` / `Run<T>` | Generated wrappers for synchronous test return shapes. |
-| `Generation.TestExecution.RunAsync` / `RunAsync<T>` | Generated wrappers for `Task` / `Task<T>`. |
-| `Generation.TestExecution.RunValueTask` / `RunValueTask<T>` | Generated wrappers for `ValueTask` / `ValueTask<T>`. |
-| `Generation.SnapshotMetadata.Register` and `Generation.Models.SnapshotDescriptor` | Register generated source identity, names, policies and build paths. |
-| `Generation.SnapshotCases.Create<T>` | Build stable parameterized case labels from argument values; also usable by explicit integrations. |
-| `Generation.Shapes` | Type-inference helpers for anonymous arrays, collections, dictionaries and pairs. Their sample values are not inspected. |
-| `SnapshotWriters.TryRegister<T>(writer)` and `TryRegister<T>(shape, writer)` | Register generated writers only if a writer is not already installed. |
+| `SnapshotMismatchException` | The comparison set failed. Read its `Report`. |
+| `SnapshotConfigurationException` | Options are invalid, the lifetime or identity is missing, or the scope is used wrong. E.g. no test is active. |
+| `SnapshotCaptureException` | A value can't be serialized or goes over a budget, or an earlier capture failure blocks completion. |
+| `SnapshotConflictException` | Two test identities resolve to the same snapshot folder, another process changed the baseline during the test, or the stored state is ambiguous. |
 
-The main package imports its build integration automatically. Advanced build controls include `ImprintInstrument="false"` metadata on a `Compile` item to exclude that source from rewriting, and `ImprintBuildAssembly` to locate the build-task assembly. `MSBuildProjectDirectory`, `MSBuildProjectName` and `ArtifactsPath` supply generated metadata. These build settings are separate from runtime configuration.
+Standard argument and cancellation exceptions can also come through. If a diagnostic write fails, the original error is kept. An aborted test can attach diagnostics to the original exception's `Data`, under `TheLithium.Imprint.Artifacts` or `TheLithium.Imprint.ArtifactError`.
 
-The package supports ordinary `void`, value-returning, `Task` and `ValueTask` test methods, including generic task/value-task results. Unsupported serialization is diagnosed with `IMP001`; unsupported lifetime shapes, such as async-void or iterator methods, use `IMP102`. See [framework integration](FRAMEWORKS.md) for the boundary and supported alternatives.
+## Generated code support
 
-Implementation sources: [capture methods](../src/TheLithium.Imprint.Core/SnapshotExtensions.cs), [scope behavior](../src/TheLithium.Imprint.Core/Execution/SnapshotScope.cs), [settings resolution](../src/TheLithium.Imprint.Core/Configuration/Settings.cs), [project reader](../src/TheLithium.Imprint.Core/Configuration/ProjectConfigurationReader.cs), and [project schema](../schemas/1.0.0/snapshots.schema.json).
+These members are public so that generated code in your test assembly can call them. They're part of the implementation, and you don't use them to set up normal tests:
+
+| API | What it does |
+| --- | --- |
+| `Generation.TestExecution.Run` and `Run<T>` | Generated wrappers for synchronous return shapes. |
+| `Generation.TestExecution.RunAsync` and `RunAsync<T>` | Generated wrappers for `Task` and `Task<T>`. |
+| `Generation.TestExecution.RunValueTask` and `RunValueTask<T>` | Generated wrappers for `ValueTask` and `ValueTask<T>`. |
+| `Generation.SnapshotMetadata.Register` and `Generation.Models.SnapshotDescriptor` | Register the generated source identity, names, policies and build paths. |
+| `Generation.SnapshotCases.Create<T>` | Builds stable case labels for parameterized tests from argument values. Custom runners can use it too. |
+| `Generation.Shapes` | Type-inference helpers for anonymous arrays, collections, dictionaries and pairs. Their sample values aren't read. |
+| `SnapshotWriters.TryRegister<T>(writer)` and `TryRegister<T>(shape, writer)` | Register generated writers, only if no writer is installed yet. |
+
+The main package imports its build integration for you. You can control it with these MSBuild settings:
+
+- `ImprintInstrument="false"` - metadata on a `Compile` item. Leaves that source out of rewriting.
+- `ImprintBuildAssembly` - the location of the build-task assembly.
+- `MSBuildProjectDirectory`, `MSBuildProjectName` and `ArtifactsPath` - give the generated metadata.
+
+These build settings are separate from the runtime configuration.
+
+The package supports `void`, value-returning, `Task` and `ValueTask` test methods, including generic task and value-task results. Unsupported serialization fails with `IMP001`. Unsupported lifetime shapes, such as async void or iterator methods, fail with `IMP102`. [Return types](FRAMEWORKS.md#return-types) lists each shape and its fix.
+
+Back to the [README](../README.md).
