@@ -6,11 +6,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <Deterministic>true</Deterministic>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <Authors>TheLithium</Authors>
-    <RepositoryUrl>https://github.com/TheLithium/TheLithium.Imprint</RepositoryUrl>
+    <RepositoryUrl>https://github.com/TheLithiumForge/TheLithium.Imprint</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
-    <PackageProjectUrl>https://github.com/TheLithium/TheLithium.Imprint</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/TheLithiumForge/TheLithium.Imprint</PackageProjectUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <Copyright>Copyright (c) 2026 TheLithiumForge</Copyright>
