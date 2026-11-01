@@ -166,7 +166,7 @@ The top-level keys are:
 | `$schema` | URL or path | Optional schema reference for your editor. See [Editor support](#editor-support). |
 | `version` | `1` | Defaults to `1` when left out. |
 | `update` | `verify`, `missing`, `all` | Update policy. [Update policies](../README.md#update-policies) describes each one. |
-| `prune` | `auto`, `report`, `off` | What happens to snapshot folders no current test owns. `report` lists them without removing them. [Stale folders](../README.md#stale-folders) describes when a folder counts as stale. |
+| `prune` | `auto`, `report`, `off` | What happens to snapshot folders no current test uses. `report` lists them without removing them. [Stale folders](../README.md#stale-folders) describes when a folder counts as stale. |
 | `allowEmptyTests` | Boolean | Lets a test that captures nothing pass, instead of failing as a likely mistake. |
 | `stringContent` | `value`, `json` | How root strings are read. Override it per test or assertion when a project captures both kinds. |
 

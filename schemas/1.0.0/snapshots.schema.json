@@ -24,7 +24,7 @@
       "default": "missing"
     },
     "prune": {
-      "description": "What happens to snapshot folders no current test owns, such as a renamed test, a deleted class or an old data row. auto: remove them once every test that could own them has run in this process, and only report them in a verify run. report: only report them. off: do neither.",
+      "description": "What happens to snapshot folders no current test uses, such as a renamed test, a deleted class or an old data row. auto: remove them once every test that could use them has run in this process, and only report them in a verify run. report: only report them. off: do neither.",
       "enum": [
         "auto",
         "report",

@@ -95,13 +95,26 @@ SnapshotPaths shares containment and existing-link checks across settings, store
 
 ## A10. Pruning
 
-SnapshotPruner removes snapshot folders that no current test owns, layer by layer: a test's rows, a suite folder, a source directory, the project root. Generated descriptors give the complete test list before the first test runs. Each predicts its suite folder and test folder name through the same Settings layout code a scope uses. Every scope records its folder and descriptor when it opens; a lifetime method entered inside another scope is recorded as entered without a folder.
+SnapshotPruner removes snapshot folders that no current test uses, layer by layer. The layers are a test's rows, a suite folder, a source directory and the project root. Generated descriptors give the complete test list before the first test runs. Each predicts its suite folder and test folder name through the same Settings layout code a scope uses. Every scope records its folder and descriptor when it opens. A lifetime method entered inside another scope is recorded as entered, without a folder.
 
-The generator adds four facts. CaseCount counts exact inline row attributes when they are the only data source. Optional marks a lifetime method called by another lifetime method, or one its attributes skip; it never blocks a layer and its folders are kept unless it ran completely. Explicit marks Snapshots.Run, RunAsync or Begin call sites, whose names are runtime data. Conditional marks a compilation with #if in a test file, or inactive code that looks like a test.
+The generator adds four facts:
 
-A layer completes when every required test in it was entered; a parameterized test whose case folders cannot be attributed reliably must run all rows. Completion is evaluated when its last test enters, while the host is alive, because VSTest can stop a test host before exit handlers finish. A folder attributed to a current test by name is removed only when that test ran all rows. An unattributed folder is removed when its nearest enclosing layer is complete, except at a configured, possibly shared snapshot root. Nothing is pruned while an Explicit method has not run, after one wrote under the root, after IMPRINT_PROJECT_ROOT changed during the run, or for a test whose location cannot be predicted. Conditional compilation, prune report and run-wide Verify only report.
+- CaseCount - the number of exact inline row attributes, when they are the only data source.
+- Optional - a lifetime method called by another lifetime method, or one its attributes skip. It never blocks a layer. Its folders are kept unless it ran completely.
+- Explicit - a Snapshots.Run, RunAsync or Begin call site, whose names are runtime data.
+- Conditional - a compilation with #if in a test file, or inactive code that looks like a test.
 
-Removal requires a leaf folder of only snapshot files or temporary siblings, no pending journal, and the per-folder store lock. Empty parents are removed up to, never including, the root, and never on the path to a predicted or visited folder. Each completed layer rewrites one JSON report under build artifacts and prints one stderr line. Pruning never throws into a test.
+A layer completes when every required test in it was entered. A parameterized test whose case folders can't be attributed reliably must run all rows. Completion is evaluated when the layer's last test enters, while the host is alive, because VSTest can stop a test host before exit handlers finish. A folder attributed to a current test by name is removed only when that test ran all rows. An unattributed folder is removed when its nearest enclosing layer is complete, except at a configured snapshot root, since another project might share it.
+
+Nothing is pruned in these cases:
+
+- An Explicit method hasn't run yet, or one wrote under the root.
+- IMPRINT_PROJECT_ROOT changed during the run.
+- A test's location can't be predicted.
+
+Conditional compilation, prune report and a run-wide Verify only report.
+
+Removal needs a leaf folder of only snapshot files or temporary siblings, no pending journal, and the per-folder store lock. Empty parents are removed up to the root, never the root itself, and never a folder on the path to a predicted or visited folder. Each completed layer rewrites one JSON report under build artifacts and prints one stderr line. Pruning never throws into a test.
 
 ## A11. Verification and documentation ownership
 

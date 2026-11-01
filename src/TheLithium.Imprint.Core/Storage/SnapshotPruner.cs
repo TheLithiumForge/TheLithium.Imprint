@@ -512,7 +512,7 @@ internal sealed class SnapshotPruner
         var kept = added.Count(outcome => outcome == "kept");
         var why = project.Mode == SnapshotPrune.Report ? "prune is set to report"
             : project.ReadOnly ? "this run only verifies"
-            : "#if may compile different tests in another build";
+            : "#if might compile different tests in another build";
         string? lead = null;
         var more = new List<string>();
         if (removed != 0)
