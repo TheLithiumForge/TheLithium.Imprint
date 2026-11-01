@@ -19,6 +19,7 @@ internal sealed partial class ProjectConfigurationJsonContext : JsonSerializerCo
         Converters =
         {
             new JsonStringEnumConverter<SnapshotUpdate>(JsonNamingPolicy.KebabCaseLower, allowIntegerValues: false),
+            new JsonStringEnumConverter<SnapshotPrune>(JsonNamingPolicy.KebabCaseLower, allowIntegerValues: false),
             new JsonStringEnumConverter<SnapshotNaming>(JsonNamingPolicy.KebabCaseLower, allowIntegerValues: false),
             new JsonStringEnumConverter<SnapshotStringContent>(JsonNamingPolicy.KebabCaseLower, allowIntegerValues: false),
             new JsonStringEnumConverter<SnapshotEnumRepresentation>(JsonNamingPolicy.KebabCaseLower, allowIntegerValues: false),

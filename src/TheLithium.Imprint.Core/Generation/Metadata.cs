@@ -8,6 +8,7 @@ namespace TheLithium.Imprint.Generation;
 public static class SnapshotMetadata
 {
     private static readonly ConcurrentDictionary<string, List<RegisteredTest>> Files = new(StringComparer.Ordinal);
+    private static int _version;
 
     public static void Register(string file, int firstLine, int lastLine, SnapshotDescriptor descriptor)
     {
@@ -24,6 +25,24 @@ public static class SnapshotMetadata
 
             list.Add(new(firstLine, lastLine, descriptor));
         }
+        Interlocked.Increment(ref _version);
+    }
+
+    /// <summary>Changes whenever a descriptor is added, so a cached view of the registry can tell it is stale.</summary>
+    internal static int Version => Volatile.Read(ref _version);
+
+    internal static SnapshotDescriptor[] All()
+    {
+        var all = new List<SnapshotDescriptor>();
+        foreach (var list in Files.Values)
+        {
+            lock (list)
+            {
+                all.AddRange(list.Select(x => x.Descriptor));
+            }
+        }
+
+        return all.Distinct().ToArray();
     }
 
     internal static SnapshotDescriptor? Find(string file, int line)

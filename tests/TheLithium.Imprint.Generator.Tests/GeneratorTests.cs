@@ -287,6 +287,63 @@ public sealed class GeneratorTests
         Assert.Contains("\"Tests\", \"Test\"", result.Source);
     }
 
+    private const string PruningSubjects = """
+        using TheLithium.Imprint;
+        using TheLithium.Imprint.Generation;
+        namespace Xunit
+        {
+            public class FactAttribute : System.Attribute { public string? Skip { get; set; } }
+            public class TheoryAttribute : FactAttribute { }
+            [System.AttributeUsage(System.AttributeTargets.Method, AllowMultiple = true)]
+            public class InlineDataAttribute : System.Attribute { public InlineDataAttribute(params object[] data) { } }
+            public class MemberDataAttribute : Xunit.Sdk.DataAttribute { public MemberDataAttribute(string name) { } }
+        }
+        namespace Xunit.Sdk { public abstract class DataAttribute : System.Attribute { } }
+        public class Tests
+        {
+            [Xunit.Theory, Xunit.InlineData(1), Xunit.InlineData(2)]
+            public void Rows(int value) => TestExecution.Run(() => value.AssertSnapshot(), new SnapshotTestOptions(), sourceFile: "Tests.cs", sourceLine: 101);
+            [Xunit.Theory, Xunit.MemberData("Data")]
+            public void Member(int value) => TestExecution.Run(() => value.AssertSnapshot(), new SnapshotTestOptions(), sourceFile: "Tests.cs", sourceLine: 102);
+            [Xunit.Fact(Skip = "later")]
+            public void Skipped() => TestExecution.Run(() => 1.AssertSnapshot(), new SnapshotTestOptions(), sourceFile: "Tests.cs", sourceLine: 103);
+            [Xunit.Fact]
+            public void UsesHelper() => TestExecution.Run(() => Helper(), new SnapshotTestOptions(), sourceFile: "Tests.cs", sourceLine: 104);
+            public void Helper() => TestExecution.Run(() => 1.AssertSnapshot(), new SnapshotTestOptions(), sourceFile: "Tests.cs", sourceLine: 105);
+            public void Custom() => Snapshots.Run(() => 1.AssertSnapshot());
+        }
+        """;
+
+    [Fact]
+    public void PruningFactsDescribeEachLifetime()
+    {
+        var result = Generate(PruningSubjects);
+        Assert.Empty(result.Errors);
+        Assert.EndsWith("{ CaseCount = 2 });", Registration(result, "Tests.Rows(int)"));
+        Assert.EndsWith("null));", Registration(result, "Tests.Member(int)"));
+        Assert.EndsWith("{ Optional = true });", Registration(result, "Tests.Skipped()"));
+        Assert.EndsWith("null));", Registration(result, "Tests.UsesHelper()"));
+        Assert.EndsWith("{ Optional = true });", Registration(result, "Tests.Helper()"));
+        Assert.EndsWith("{ Explicit = true });", Registration(result, "Tests.Custom()"));
+    }
+
+    [Fact]
+    public void ConditionalCompilationIsRecordedOnEveryLifetime()
+    {
+        var result = Generate(PruningSubjects.Replace("public class Tests\n{", "public class Tests\n{\n#if NEVER\n    public void Other() { }\n#endif", StringComparison.Ordinal));
+        Assert.Empty(result.Errors);
+        Assert.EndsWith("{ CaseCount = 2, Conditional = true });", Registration(result, "Tests.Rows(int)"));
+        Assert.EndsWith("{ Explicit = true, Conditional = true });", Registration(result, "Tests.Custom()"));
+    }
+
+    /// <summary>The last line of one method's registration, where the pruning facts are written.</summary>
+    private static string Registration(GenerationResult result, string method)
+    {
+        var chunk = Assert.Single(result.Source.Split("SnapshotMetadata.Register("),
+            chunk => chunk.Contains($"\"global::{method}\"", StringComparison.Ordinal));
+        return chunk.Split('\n').Select(line => line.Trim()).Last(line => line.EndsWith(");", StringComparison.Ordinal));
+    }
+
     private static GenerationResult Generate(string source)
     {
         source = """

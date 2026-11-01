@@ -26,6 +26,7 @@ public static class Snapshots
         ArgumentNullException.ThrowIfNull(sourceFile);
         var settings = Settings.Resolve(options, sourceFile, sourceLine);
         var scope = new SnapshotScope(settings, Ambient.Value);
+        SnapshotPruner.Process.Visited(settings);
         Ambient.Value = scope;
         return scope;
     }

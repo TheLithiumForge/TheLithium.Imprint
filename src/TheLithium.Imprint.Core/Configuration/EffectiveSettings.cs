@@ -2,6 +2,11 @@ namespace TheLithium.Imprint.Configuration;
 
 internal sealed record EffectiveSettings
 {
+    /// <summary>The generated descriptor the scope resolved, or null for a Core-only integration.</summary>
+    public required SnapshotDescriptor? Descriptor
+    {
+        get; init;
+    }
     public required SnapshotTestIdentity Identity
     {
         get; init;

@@ -280,10 +280,28 @@ function verifyExecutables(context: Context, managedOnly: boolean): void {
   }
 }
 
+/** Folders no current test owns: a renamed test, an old row and a deleted class. A complete run removes them. */
+const STALE_FOLDERS = [
+  ["Review suite", "Renamed"],
+  ["Review suite", "Parameterized [row=9]"],
+  ["Deleted suite", "Old"],
+];
+
+function plantStaleFolders(snapshots: string): string[] {
+  return STALE_FOLDERS.map((parts) => {
+    const folder = join(snapshots, ...parts);
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, "value.json"), "1\n", "utf8");
+    return folder;
+  });
+}
+
 function verifyFrameworks(context: Context): void {
   for (const project of FRAMEWORK_PROJECTS) {
     const projectFile = join(project, `${project}.csproj`);
     runLogged(context, `${project}-restore.log`, "dotnet", ["restore", projectFile, "--force-evaluate"]);
+    const snapshots = join(context.output, project, "__snapshots__");
+    const stale = plantStaleFolders(snapshots);
 
     // Create baselines on the first pass, then verify them in a separate process.
     for (const policy of ["missing", "verify"]) {
@@ -294,7 +312,11 @@ function verifyFrameworks(context: Context): void {
         "dotnet",
         ["test", projectFile, "-c", "Release", "--no-restore", "--logger", "trx", "--results-directory", results],
       );
-      assertTestResults(results, join(context.output, project, "__snapshots__"));
+      const left = stale.filter((folder) => existsSync(folder));
+      if (left.length !== 0) {
+        fail(`A complete ${project} run left stale snapshot folders: ${left.join(", ")}`);
+      }
+      assertTestResults(results, snapshots);
       printTail(run.output);
     }
   }

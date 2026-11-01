@@ -33,26 +33,19 @@ internal static class Settings
         // runner adapter, so no command line or .runsettings value can reach it.
         // Continuous integration verifies unless that particular run asks for something else.
         var runOverride = ResolveRunOverride();
+        // An invalid IMPRINT_PRUNE fails every test, the same way an invalid IMPRINT_UPDATE does.
+        ResolvePrune(config);
 
         // Read-only is a property of the run, never of one test: a run-wide Verify means nothing
         // on disk changes, including recovery of an interrupted commit. A test or project policy
         // of Verify is ordinary precedence that a narrower scope is still allowed to override.
         var readOnly = runOverride == SnapshotUpdate.Verify;
-        var rootSetting = options.RootDirectory ?? config.RootDirectory;
-        var baselineRoot = rootSetting is null ? Path.Combine(project, config.SnapshotFolderName) : FullPath(project, rootSetting);
-        var relativeSource = Path.GetRelativePath(project, sourceFile);
-        if (options.Identity is null && (Path.IsPathRooted(relativeSource) || relativeSource == ".." || relativeSource.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
-        {
-            throw new SnapshotConfigurationException("The test source file must be inside its project root. Supply an explicit identity for linked source files.");
-        }
-        var testPath = Path.GetDirectoryName(relativeSource) ?? string.Empty;
+        var baselineRoot = BaselineRoot(project, options.RootDirectory ?? config.RootDirectory, config);
         var testFolder = TestNames.FolderName(identity);
-        var testDirectory = Path.Combine(baselineRoot, testPath, PortableNames.Segment(suite), PortableNames.Segment(testFolder));
-        var buildArtifacts = Path.Combine(project, "artifacts");
-        if (options.Identity is null && project == descriptor?.ProjectDirectory && descriptor?.BuildArtifactsDirectory is { Length: > 0 } generatedArtifacts)
-        {
-            buildArtifacts = FullPath(project, generatedArtifacts);
-        }
+        var testDirectory = Path.Combine(SuiteDirectory(baselineRoot, project, sourceFile, suite, options.Identity is not null),
+            PortableNames.Segment(testFolder));
+        var buildArtifacts = options.Identity is null && project == descriptor?.ProjectDirectory
+            ? BuildArtifacts(project, descriptor) : Path.Combine(project, "artifacts");
         var artifacts = FullPath(project, options.ArtifactDirectory ?? config.ArtifactDirectory ?? Path.Combine(buildArtifacts, "imprint", "failures"));
         var storage = Path.Combine(buildArtifacts, "imprint", "storage");
         // Validate before opening the store: diagnostic paths must never redirect
@@ -81,6 +74,7 @@ internal static class Settings
 
         return new EffectiveSettings
         {
+            Descriptor = descriptor,
             Identity = identity,
             IdentityKey = IdentityKey(identity),
             BaselineRoot = Path.GetFullPath(baselineRoot),
@@ -103,8 +97,39 @@ internal static class Settings
         };
     }
 
+    internal static string BaselineRoot(string project, string? rootSetting, ProjectConfiguration config)
+        => rootSetting is null ? Path.Combine(project, config.SnapshotFolderName) : FullPath(project, rootSetting);
+
+    /// <summary>The folder that holds one suite's test folders. Shared with pruning, which predicts folders the same way.</summary>
+    internal static string SuiteDirectory(string baselineRoot, string project, string sourceFile, string suite, bool explicitIdentity)
+    {
+        var relativeSource = Path.GetRelativePath(project, sourceFile);
+        if (!explicitIdentity && (Path.IsPathRooted(relativeSource) || relativeSource == ".." || relativeSource.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
+        {
+            throw new SnapshotConfigurationException("The test source file must be inside its project root. Supply an explicit identity for linked source files.");
+        }
+        return Path.Combine(baselineRoot, Path.GetDirectoryName(relativeSource) ?? string.Empty, PortableNames.Segment(suite));
+    }
+
+    internal static string BuildArtifacts(string project, SnapshotDescriptor? descriptor)
+        => descriptor?.BuildArtifactsDirectory is { Length: > 0 } generatedArtifacts
+            ? FullPath(project, generatedArtifacts) : Path.Combine(project, "artifacts");
+
+    /// <summary>IMPRINT_PRUNE for this run, otherwise the project's prune setting.</summary>
+    internal static SnapshotPrune ResolvePrune(ProjectConfiguration config)
+    {
+        var requested = Environment.GetEnvironmentVariable("IMPRINT_PRUNE");
+        return requested is null ? config.Prune : requested.ToLowerInvariant() switch
+        {
+            "auto" => SnapshotPrune.Auto,
+            "report" => SnapshotPrune.Report,
+            "off" => SnapshotPrune.Off,
+            _ => throw new SnapshotConfigurationException("IMPRINT_PRUNE must be 'auto', 'report', or 'off'.")
+        };
+    }
+
     /// <summary>The policy this run asks for, above any test, attribute, or project setting.</summary>
-    private static SnapshotUpdate? ResolveRunOverride()
+    internal static SnapshotUpdate? ResolveRunOverride()
     {
         var requested = Environment.GetEnvironmentVariable("IMPRINT_UPDATE");
         if (requested is not null)

@@ -23,6 +23,15 @@
       ],
       "default": "missing"
     },
+    "prune": {
+      "description": "What happens to snapshot folders no current test owns, such as a renamed test, a deleted class or an old data row. auto: remove them once every test that could own them has run in this process, and only report them in a verify run. report: only report them. off: do neither.",
+      "enum": [
+        "auto",
+        "report",
+        "off"
+      ],
+      "default": "auto"
+    },
     "allowEmptyTests": {
       "description": "Allow a test that captures nothing to pass instead of failing as a likely mistake.",
       "type": "boolean",
