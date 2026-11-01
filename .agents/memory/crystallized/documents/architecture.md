@@ -49,11 +49,11 @@ SnapshotCases renders arguments as canonical JSON and a readable label. Truncati
 
 SnapshotTestOptions owns identity overrides (Name, Suite, Case, Variant, Identity), paths (RootDirectory, ArtifactDirectory, ConfigurationFile), Update, Comparison, Representation, StringContent, Naming, AllowEmpty, three capture limits and CancellationToken. SnapshotOptions owns Update, Format, StringContent, Representation, Comparison and Comparer for one capture.
 
-ProjectConfigurationReader reads optional snapshots.config.json through the bounded UTF-8 reader and StrictJson, then deserializes with ProjectConfigurationJsonContext. Groups: files, naming, comparison, representation and limits; top-level version, update, stringContent, allowEmptyTests and $schema. Unknown and duplicate properties, integer enum values and invalid product constraints fail. Private mutable input classes preserve source-generated default initialization, then map immediately into immutable domain settings. Absent failureArtifactPath preserves build-provided defaults; explicit null is rejected. Legacy names are not recognized. The shipped versioned JSON Schema assists editors; schema tests compare its keys with generated JSON metadata. No runtime schema-validation dependency is needed.
+ProjectConfigurationReader reads optional snapshots.config.json through the bounded UTF-8 reader and StrictJson, then deserializes with ProjectConfigurationJsonContext. Groups: files, naming, comparison, representation and limits; top-level version, update, prune, stringContent, allowEmptyTests and $schema. Unknown and duplicate properties, integer enum values and invalid product constraints fail. Private mutable input classes preserve source-generated default initialization, then map immediately into immutable domain settings. Absent failureArtifactPath preserves build-provided defaults; explicit null is rejected. Legacy names are not recognized. The shipped versioned JSON Schema assists editors; schema tests compare its keys with generated JSON metadata. No runtime schema-validation dependency is needed.
 
 For update policy, explicit IMPRINT_UPDATE wins. Without it, CI=true/1 imposes run-wide Verify. Otherwise an entry override wins over current/test policy, which resolves explicit test options, method/class metadata, project config, then Missing. Only whole-test All prunes unused entries. Ordinary Verify can be overridden at a narrower scope; run-wide Verify cannot and refuses interrupted recovery. Locks and diagnostics can still write during verification.
 
-The supported environment inputs are IMPRINT_UPDATE, IMPRINT_PROJECT_ROOT and CI. Comparison and representation patches resolve field by field from defaults through project, test and assertion. Null means inherit; explicit false/zero overrides. ResolvedSnapshotComparison and ResolvedSnapshotRepresentation own concrete values; custom comparers and writers receive these non-nullable types. Scope setters accept patches only before the first capture.
+The supported environment inputs are IMPRINT_UPDATE, IMPRINT_PRUNE, IMPRINT_PROJECT_ROOT and CI. Comparison and representation patches resolve field by field from defaults through project, test and assertion. Null means inherit; explicit false/zero overrides. ResolvedSnapshotComparison and ResolvedSnapshotRepresentation own concrete values; custom comparers and writers receive these non-nullable types. Scope setters accept patches only before the first capture.
 
 Default comparison: exact numbers, ordered arrays, ordinal case-sensitive strings/property names, ignored text line endings, significant trailing spaces/tabs, unordered-array limit 256. Negative tolerance and invalid bounds fail. Format is Auto/Json/Text. Auto chooses .txt for a non-null root string without an explicit writer and .json otherwise, without inspecting content. Explicit Json captures an ordinary string as a JSON string value. StringContent.Json explicitly accepts a non-null supplied JSON document with Auto/Json and no explicit writer; Text or non-string input is contradictory and fails. Null normally produces JSON null; Text requires a non-null string. Naming defaults to NameThenOrder; framework display names are off; empty tests fail.
 
@@ -93,7 +93,30 @@ Files are individually replaced through a temporary sibling and rename. A direct
 
 SnapshotPaths shares containment and existing-link checks across settings, store and artifacts. Baseline, artifact and recovery roots must be pairwise disjoint, including ancestor overlap. The build/explicit project anchor's ancestors are trusted; links at/below it are rejected. External paths are checked from the filesystem root. Verified macOS /tmp, /var and /etc aliases are canonicalized consistently for containment and traversal. These checks are cooperative rather than race-free against hostile concurrent mutation. SnapshotFileReader bounds reads during allocation, validates strict UTF-8 and checks cancellation. Configuration accepts optional UTF-8 BOM, not implicit UTF-16 detection. Journal marker reads are bounded. Claims and writer registries have process lifetime.
 
-## A10. Verification and documentation ownership
+## A10. Pruning
+
+SnapshotPruner removes snapshot folders that no current test uses, layer by layer. The layers are a test's rows, a suite folder, a source directory and the project root. Generated descriptors give the complete test list before the first test runs. Each predicts its suite folder and test folder name through the same Settings layout code a scope uses. Every scope records its folder and descriptor when it opens. A lifetime method entered inside another scope is recorded as entered, without a folder.
+
+The generator adds four facts:
+
+- CaseCount - the number of exact inline row attributes, when they are the only data source.
+- Optional - a lifetime method called by another lifetime method, or one its attributes skip. It never blocks a layer. Its folders are kept unless it ran completely.
+- Explicit - a Snapshots.Run, RunAsync or Begin call site, whose names are runtime data.
+- Conditional - a compilation with #if in a test file, or inactive code that looks like a test.
+
+A layer completes when every required test in it was entered. A parameterized test whose case folders can't be attributed reliably must run all rows. Completion is evaluated when the layer's last test enters, while the host is alive, because VSTest can stop a test host before exit handlers finish. A folder attributed to a current test by name is removed only when that test ran all rows. An unattributed folder is removed when its nearest enclosing layer is complete, except at a configured snapshot root, since another project might share it.
+
+Nothing is pruned in these cases:
+
+- An Explicit method hasn't run yet, or one wrote under the root.
+- IMPRINT_PROJECT_ROOT changed during the run.
+- A test's location can't be predicted.
+
+Conditional compilation, prune report and a run-wide Verify only report.
+
+Removal needs a leaf folder of only snapshot files or temporary siblings, no pending journal, and the per-folder store lock. Empty parents are removed up to the root, never the root itself, and never a folder on the path to a predicted or visited folder. Each completed layer rewrites one JSON report under build artifacts and prints one stderr line. Pruning never throws into a test.
+
+## A11. Verification and documentation ownership
 
 The plain executable specifications run on managed .NET and Native AOT. Framework suites exercise xUnit, NUnit, MSTest; generator tests inspect generated code and diagnostics. Package-consumer tests catch missing analyzer/task/schema payloads. Workflows run managed and packaged AOT lanes on Windows, Linux and macOS. The release workflow reuses validation before publishing two packages.
 

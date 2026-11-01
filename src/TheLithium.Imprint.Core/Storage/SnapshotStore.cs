@@ -17,8 +17,8 @@ internal sealed class SnapshotStore
     internal SnapshotStore(EffectiveSettings settings)
     {
         _settings = settings;
-        var physicalKey = PortableNames.Hash(settings.TestDirectory.Replace('\\', '/').ToUpperInvariant());
-        _journal = Path.Combine(settings.StorageRoot, "transactions", physicalKey);
+        var physicalKey = PhysicalKey(settings.TestDirectory);
+        _journal = JournalPath(settings.StorageRoot, settings.TestDirectory);
         var claim = Claims.GetOrAdd(physicalKey, settings.IdentityKey);
         if (claim != settings.IdentityKey)
         {
@@ -26,8 +26,17 @@ internal sealed class SnapshotStore
         }
         // A stable project lock path lets processes with different diagnostic paths coordinate.
         // Lock files are intentionally not deleted: unlinking them creates a lock-inode race.
-        _lockPath = Path.Combine(settings.StorageRoot, "locks", $"{physicalKey}.lock");
+        _lockPath = LockPath(settings.StorageRoot, settings.TestDirectory);
     }
+
+    private static string PhysicalKey(string testDirectory) => PortableNames.Hash(testDirectory.Replace('\\', '/').ToUpperInvariant());
+
+    /// <summary>The per-folder lock that commits and pruning both hold.</summary>
+    internal static string LockPath(string storageRoot, string testDirectory)
+        => Path.Combine(storageRoot, "locks", $"{PhysicalKey(testDirectory)}.lock");
+
+    internal static string JournalPath(string storageRoot, string testDirectory)
+        => Path.Combine(storageRoot, "transactions", PhysicalKey(testDirectory));
 
     internal BaselineState Read()
     {
@@ -253,22 +262,27 @@ internal sealed class SnapshotStore
         var directory = Path.GetDirectoryName(_lockPath) ?? throw new SnapshotConfigurationException("The lock path has no parent directory.");
         EnsureSafeDirectory(directory);
         SnapshotPaths.CheckLink(_lockPath);
+        return WaitForLock(_lockPath, _settings.LockTimeout, _settings.DisplayName, _settings.Cancellation);
+    }
+
+    internal static FileStream WaitForLock(string lockPath, TimeSpan timeout, string displayName, CancellationToken cancellation)
+    {
         var elapsed = Stopwatch.StartNew();
         while (true)
         {
-            _settings.Cancellation.ThrowIfCancellationRequested();
+            cancellation.ThrowIfCancellationRequested();
             try
             {
-                return new FileStream(_lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite,
+                return new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite,
                     FileShare.None, 1, FileOptions.None);
             }
-            catch (IOException) when (elapsed.Elapsed < _settings.LockTimeout)
+            catch (IOException) when (elapsed.Elapsed < timeout)
             {
                 Thread.Sleep(25);
             }
             catch (IOException error)
             {
-                throw new SnapshotException($"Could not acquire the snapshot write lock: {_settings.DisplayName}", error);
+                throw new SnapshotException($"Could not acquire the snapshot write lock: {displayName}", error);
             }
         }
     }

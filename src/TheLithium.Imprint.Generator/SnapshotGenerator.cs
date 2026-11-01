@@ -28,6 +28,7 @@ public sealed partial class SnapshotGenerator : IIncrementalGenerator
         internal readonly MethodDeclarationSyntax? Declaration;
         internal readonly IMethodSymbol? Caller;
         internal readonly bool IsBoundary;
+        internal readonly bool IsExplicit;
         internal string? OriginalFile
         {
             get; set;
@@ -37,13 +38,14 @@ public sealed partial class SnapshotGenerator : IIncrementalGenerator
             get; set;
         }
         internal Candidate(InvocationExpressionSyntax syntax, ITypeSymbol? root,
-            MethodDeclarationSyntax? declaration, IMethodSymbol? caller, bool boundary)
+            MethodDeclarationSyntax? declaration, IMethodSymbol? caller, bool boundary, bool explicitLifetime)
         {
             Syntax = syntax;
             Root = root;
             Declaration = declaration;
             Caller = caller;
             IsBoundary = boundary;
+            IsExplicit = explicitLifetime;
         }
     }
 
@@ -106,8 +108,8 @@ public sealed partial class SnapshotGenerator : IIncrementalGenerator
 
         var definition = method.ReducedFrom ?? method;
         var owner = definition.ContainingType.ToDisplayString();
-        var boundary = owner == "TheLithium.Imprint.Snapshots" && (method.Name == "Run" || method.Name == "RunAsync" || method.Name == "Begin");
-        boundary |= owner == "TheLithium.Imprint.Generation.TestExecution";
+        var explicitLifetime = owner == "TheLithium.Imprint.Snapshots" && (method.Name == "Run" || method.Name == "RunAsync" || method.Name == "Begin");
+        var boundary = explicitLifetime || owner == "TheLithium.Imprint.Generation.TestExecution";
         var capture = owner == "TheLithium.Imprint.SnapshotExtensions" && (method.Name == "AssertSnapshot" || method.Name == "UpdateSnapshot");
         var explicitWrite = owner == "TheLithium.Imprint.SnapshotWriters" && method.Name == "Write";
         explicitWrite |= owner == "TheLithium.Imprint.Generation.SnapshotCases" && method.Name == "Create";
@@ -125,7 +127,7 @@ public sealed partial class SnapshotGenerator : IIncrementalGenerator
             root = method.TypeArguments[0];
         }
 
-        var candidate = new Candidate(syntax, root, declaration, caller, boundary);
+        var candidate = new Candidate(syntax, root, declaration, caller, boundary, explicitLifetime);
         if (owner == "TheLithium.Imprint.Generation.TestExecution")
         {
             foreach (var argument in syntax.ArgumentList.Arguments)
@@ -179,16 +181,16 @@ public sealed partial class SnapshotGenerator : IIncrementalGenerator
                     {
             """);
         body.Append(engine.Registrations);
+        var boundaries = calls.Where(candidate => candidate != null && candidate.IsBoundary
+            && candidate.Declaration != null && candidate.Caller != null).Select(candidate => candidate!).ToArray();
+        var helpers = CalledByLifetimes(compilation, boundaries);
+        var conditional = UsesConditionalCompilation(compilation, boundaries);
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var candidate in calls)
+        foreach (var candidate in boundaries)
         {
-            if (candidate == null || !candidate.IsBoundary || candidate.Declaration == null || candidate.Caller == null)
-            {
-                continue;
-            }
 
-            var declaration = candidate.Declaration;
-            var method = candidate.Caller;
+            var declaration = candidate.Declaration!;
+            var method = candidate.Caller!;
             var location = declaration.GetLocation().GetMappedLineSpan();
             var file = candidate.OriginalFile ?? (string.IsNullOrEmpty(location.Path) ? declaration.SyntaxTree.FilePath : location.Path);
             var firstLine = candidate.OriginalLine ?? location.StartLinePosition.Line + 1;
@@ -211,16 +213,33 @@ public sealed partial class SnapshotGenerator : IIncrementalGenerator
 
             var requiresCase = method.Parameters.Any(parameter => !CompilerTypeFacts.IsCancellationToken(parameter.Type))
                 || method.TypeParameters.Length != 0 || method.ContainingType.IsGenericType;
-            var methodIdentity = method.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat
-                .WithMemberOptions(SymbolDisplayMemberOptions.IncludeContainingType | SymbolDisplayMemberOptions.IncludeParameters)
-                .WithParameterOptions(SymbolDisplayParameterOptions.IncludeType));
+            var methodIdentity = MethodIdentity(method);
+            // Facts for pruning. Each is emitted only when it differs from its default.
+            var facts = new List<string>();
+            if (requiresCase && !candidate.IsExplicit && CaseCount(method) is int rows)
+            {
+                facts.Add(FormattableString.Invariant($"CaseCount = {rows}"));
+            }
+            if (helpers.Contains(methodIdentity) || Skipped(method))
+            {
+                facts.Add("Optional = true");
+            }
+            if (candidate.IsExplicit)
+            {
+                facts.Add("Explicit = true");
+            }
+            if (conditional)
+            {
+                facts.Add("Conditional = true");
+            }
+            var initializer = facts.Count == 0 ? string.Empty : $" {{ {string.Join(", ", facts)} }}";
             body.AppendLine(FormattableString.Invariant($$"""
                             global::TheLithium.Imprint.Generation.SnapshotMetadata.Register({{Literal(file)}}, {{firstLine}}, {{lastLine}},
                                 new global::TheLithium.Imprint.Generation.Models.SnapshotDescriptor(
                                     {{Literal(project)}}, {{Literal(projectName)}}, {{Literal(file)}},
                                     {{Literal(suite)}}, {{Literal(test)}}, {{Literal(methodIdentity)}},
                                     (global::TheLithium.Imprint.SnapshotUpdate){{update}}, {{(requiresCase ? "true" : "false")}},
-                                    {{(artifacts == null ? "null" : Literal(artifacts))}}, {{(displayName == null ? "null" : Literal(displayName))}}));
+                                    {{(artifacts == null ? "null" : Literal(artifacts))}}, {{(displayName == null ? "null" : Literal(displayName))}}){{initializer}});
                 """));
         }
         body.AppendLine("""
@@ -230,6 +249,183 @@ public sealed partial class SnapshotGenerator : IIncrementalGenerator
             """);
         context.AddSource("TheLithium.Imprint.Generated.g.cs", SourceText.From(body.ToString(), Encoding.UTF8));
     }
+
+    private static string MethodIdentity(IMethodSymbol method) => method.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat
+        .WithMemberOptions(SymbolDisplayMemberOptions.IncludeContainingType | SymbolDisplayMemberOptions.IncludeParameters)
+        .WithParameterOptions(SymbolDisplayParameterOptions.IncludeType));
+
+    /// <summary>
+    /// Lifetime methods that another lifetime method calls. They run inside the caller's scope,
+    /// so a complete run need not enter them on their own.
+    /// </summary>
+    private static HashSet<string> CalledByLifetimes(Compilation compilation, Candidate[] boundaries)
+    {
+        var lifetimes = new HashSet<string>(boundaries.Select(candidate => MethodIdentity(candidate.Caller!)), StringComparer.Ordinal);
+        var called = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var candidate in boundaries)
+        {
+            var tree = candidate.Declaration!.SyntaxTree;
+            if (!compilation.ContainsSyntaxTree(tree))
+            {
+                continue;
+            }
+
+            var model = compilation.GetSemanticModel(tree);
+            var self = MethodIdentity(candidate.Caller!);
+            foreach (var invocation in candidate.Declaration.DescendantNodes().OfType<InvocationExpressionSyntax>())
+            {
+                if (model.GetSymbolInfo(invocation).Symbol is IMethodSymbol target)
+                {
+                    var identity = MethodIdentity((target.ReducedFrom ?? target).OriginalDefinition);
+                    if (identity != self && lifetimes.Contains(identity))
+                    {
+                        called.Add(identity);
+                    }
+                }
+            }
+        }
+
+        return called;
+    }
+
+    /// <summary>
+    /// True when another build configuration or target framework may compile a different set of
+    /// tests: a test file uses #if, or inactive code anywhere looks like a test.
+    /// </summary>
+    private static bool UsesConditionalCompilation(Compilation compilation, Candidate[] boundaries)
+    {
+        var testFiles = new HashSet<string>(boundaries.Select(candidate => candidate.Declaration!.SyntaxTree.FilePath), StringComparer.Ordinal);
+        foreach (var tree in compilation.SyntaxTrees)
+        {
+            var root = tree.GetRoot();
+            if (!root.ContainsDirectives)
+            {
+                continue;
+            }
+
+            var testFile = testFiles.Contains(tree.FilePath);
+            foreach (var trivia in root.DescendantTrivia())
+            {
+                if (testFile && trivia.IsKind(SyntaxKind.IfDirectiveTrivia))
+                {
+                    return true;
+                }
+
+                if (trivia.IsKind(SyntaxKind.DisabledTextTrivia) && LooksLikeTest(trivia.ToString()))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool LooksLikeTest(string text) => text.Contains("Snapshot") || text.Contains("[Fact") || text.Contains("[Theory")
+        || text.Contains("[Test") || text.Contains("[DataRow") || text.Contains("[InlineData") || text.Contains("[DataTestMethod");
+
+    /// <summary>The number of constant rows, when inline row attributes are the method's only data source.</summary>
+    private static int? CaseCount(IMethodSymbol method)
+    {
+        if (method.TypeParameters.Length != 0 || method.ContainingType.IsGenericType
+            || method.Parameters.Any(parameter => parameter.GetAttributes().Length != 0))
+        {
+            return null;
+        }
+
+        var rows = 0;
+        foreach (var attribute in method.GetAttributes())
+        {
+            var type = attribute.AttributeClass;
+            if (type == null)
+            {
+                return null;
+            }
+
+            if (type.ToDisplayString() is "Xunit.InlineDataAttribute" or "NUnit.Framework.TestCaseAttribute"
+                or "Microsoft.VisualStudio.TestTools.UnitTesting.DataRowAttribute")
+            {
+                rows++;
+            }
+            else if (IsDataSource(type))
+            {
+                return null;
+            }
+        }
+
+        return rows == 0 ? (int?)null : rows;
+    }
+
+    /// <summary>Any attribute that supplies rows. Exact inline row types are counted before this check.</summary>
+    private static bool IsDataSource(INamedTypeSymbol type)
+    {
+        for (INamedTypeSymbol? current = type; current != null; current = current.BaseType)
+        {
+            if (current.ToDisplayString() is "Xunit.Sdk.DataAttribute" or "Xunit.v3.DataAttribute"
+                or "Xunit.InlineDataAttribute" or "NUnit.Framework.TestCaseAttribute" or "NUnit.Framework.TestCaseSourceAttribute"
+                or "Microsoft.VisualStudio.TestTools.UnitTesting.DataRowAttribute"
+                or "Microsoft.VisualStudio.TestTools.UnitTesting.DynamicDataAttribute")
+            {
+                return true;
+            }
+        }
+
+        return type.AllInterfaces.Any(contract => contract.Name is "ITestDataSource" or "ITestBuilder"
+            or "IParameterDataSource" or "IDataAttribute");
+    }
+
+    /// <summary>A test its own attributes skip, or one that runs only when selected explicitly.</summary>
+    private static bool Skipped(IMethodSymbol method)
+    {
+        foreach (var attribute in method.GetAttributes())
+        {
+            var type = attribute.AttributeClass;
+            if (type == null || IsRowAttribute(type))
+            {
+                continue;
+            }
+
+            if (IsIgnore(type))
+            {
+                return true;
+            }
+
+            if (InXunit(type) && attribute.NamedArguments.Any(argument =>
+                argument.Key == "Skip" && argument.Value.Value is string reason && reason.Length != 0
+                || argument.Key == "Explicit" && argument.Value.Value is true))
+            {
+                return true;
+            }
+        }
+
+        for (INamedTypeSymbol? type = method.ContainingType; type != null; type = type.ContainingType)
+        {
+            if (type.GetAttributes().Any(attribute => attribute.AttributeClass is { } kind && IsIgnore(kind)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsIgnore(INamedTypeSymbol type) => type.ToDisplayString() is "NUnit.Framework.IgnoreAttribute"
+        or "NUnit.Framework.ExplicitAttribute" or "Microsoft.VisualStudio.TestTools.UnitTesting.IgnoreAttribute";
+
+    private static bool InXunit(INamedTypeSymbol type)
+    {
+        for (INamedTypeSymbol? current = type; current != null; current = current.BaseType)
+        {
+            var ns = current.ContainingNamespace.ToDisplayString();
+            if (ns == "Xunit" || ns.StartsWith("Xunit.", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
 
     private static int ClassUpdate(INamedTypeSymbol? type)
     {

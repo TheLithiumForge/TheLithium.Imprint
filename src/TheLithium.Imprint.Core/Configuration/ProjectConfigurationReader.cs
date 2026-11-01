@@ -46,6 +46,10 @@ internal static class ProjectConfigurationReader
         {
             throw new SnapshotConfigurationException("Configuration requires version 1 and update verify, missing or all.");
         }
+        if (file.Prune is < SnapshotPrune.Auto or > SnapshotPrune.Off)
+        {
+            throw new SnapshotConfigurationException("prune must be auto, report or off.");
+        }
         if (PortableNames.Segment(file.Files.SnapshotFolderName) != file.Files.SnapshotFolderName)
         {
             throw new SnapshotConfigurationException("files.snapshotFolderName must be a portable single folder name.");
@@ -73,6 +77,7 @@ internal static class ProjectConfigurationReader
         return new()
         {
             Update = file.Update,
+            Prune = file.Prune,
             AllowEmpty = file.AllowEmptyTests,
             StringContent = file.StringContent,
             SnapshotFolderName = file.Files.SnapshotFolderName,

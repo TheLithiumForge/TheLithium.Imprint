@@ -70,5 +70,14 @@ public static class TestExecution
     }
 
     private static SnapshotScope? Open(SnapshotTestOptions options, string sourceFile, int sourceLine)
-        => Snapshots.Active is null ? Snapshots.Begin(options, sourceFile, sourceLine) : null;
+    {
+        if (Snapshots.Active is null)
+        {
+            return Snapshots.Begin(options, sourceFile, sourceLine);
+        }
+
+        // A helper running inside another test's scope still counts as having run.
+        SnapshotPruner.Process.Entered(sourceFile, sourceLine);
+        return null;
+    }
 }

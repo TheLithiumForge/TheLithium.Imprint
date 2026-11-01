@@ -8,6 +8,10 @@ internal sealed class ProjectConfigurationFile
     public string Schema { get; set; } = string.Empty;
     public int Version { get; set; } = 1;
     public SnapshotUpdate Update { get; set; } = SnapshotUpdate.Missing;
+    public SnapshotPrune Prune
+    {
+        get; set;
+    }
     public bool AllowEmptyTests
     {
         get; set;

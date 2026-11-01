@@ -3,6 +3,10 @@ namespace TheLithium.Imprint.Configuration.Models;
 internal sealed record ProjectConfiguration
 {
     internal SnapshotUpdate Update { get; init; } = SnapshotUpdate.Missing;
+    internal SnapshotPrune Prune
+    {
+        get; init;
+    }
     internal string SnapshotFolderName { get; init; } = "__snapshots__";
     internal bool UseFrameworkDisplayNames
     {

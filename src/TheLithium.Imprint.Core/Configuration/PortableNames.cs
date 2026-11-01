@@ -5,7 +5,7 @@ namespace TheLithium.Imprint.Configuration;
 
 internal static class PortableNames
 {
-    private const int MaximumSegmentLength = 96;
+    internal const int MaximumSegmentLength = 96;
     private const int HashSuffixLength = 16;
     private static readonly HashSet<string> Devices = new(StringComparer.OrdinalIgnoreCase)
     { "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
@@ -22,14 +22,7 @@ internal static class PortableNames
         }
 
         var original = value;
-        value = value.Normalize(NormalizationForm.FormC);
-        var builder = new StringBuilder(value.Length);
-        foreach (var ch in value)
-        {
-            builder.Append(ch < 32 || ch == 127 || "<>:\"/\\|?*".Contains(ch) ? '_' : ch);
-        }
-
-        var safe = builder.ToString().TrimEnd(' ', '.');
+        var safe = Map(value).TrimEnd(' ', '.');
         if (safe is "" or "." or "..")
         {
             safe = "snapshot";
@@ -53,6 +46,19 @@ internal static class PortableNames
         }
 
         return safe;
+    }
+
+    /// <summary>Normalizes and replaces characters no file system accepts. A segment starts with this text unless it was truncated.</summary>
+    internal static string Map(string value)
+    {
+        value = value.Normalize(NormalizationForm.FormC);
+        var builder = new StringBuilder(value.Length);
+        foreach (var ch in value)
+        {
+            builder.Append(ch < 32 || ch == 127 || "<>:\"/\\|?*".Contains(ch) ? '_' : ch);
+        }
+
+        return builder.ToString();
     }
 
     internal static string? Infer(string? expression)

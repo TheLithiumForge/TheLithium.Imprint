@@ -3,6 +3,7 @@
   "version": 1,
 
   "update": "missing",
+  "prune": "auto",
   "allowEmptyTests": false,
   "stringContent": "value",
   "representation": {

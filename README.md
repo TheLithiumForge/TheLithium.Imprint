@@ -235,7 +235,7 @@ An entry is unused when the baseline has a snapshot that the test no longer capt
 | `missing` _(default)_ | create, and pass | fail      | fail   |
 | `all`                 | create           | overwrite | delete |
 
-`all` deletes unused files only when it applies to the whole test, through an attribute, the config file or `IMPRINT_UPDATE`. A single `UpdateSnapshot()` call never deletes anything.
+`all` deletes unused files only when it applies to the whole test, through an attribute, the config file or `IMPRINT_UPDATE`. A single `UpdateSnapshot()` call never deletes anything. A whole folder that no current test uses is a stale folder instead, and [Stale folders](#stale-folders) covers when Imprint removes one.
 
 A run-wide `verify` stops baseline changes. You get it from `IMPRINT_UPDATE=verify` or from CI.
 
@@ -490,6 +490,38 @@ foreach (var item in items)
 }
 ```
 
+### Stale folders
+
+Renaming a test, deleting a class, moving a test file or changing a data row leaves the old snapshot folder behind. Imprint removes these stale folders for you, but only within what the run covered completely:
+
+| What you run | What it can remove |
+| --- | --- |
+| One parameterized test, all its rows | Its old row folders |
+| One class | Folders in that class's suite folder that no current test uses |
+| Every class in a source folder | Folders of classes that were deleted from it or moved out of it |
+| The whole test project, e.g. `dotnet test` | Anything stale under the project's snapshot root |
+
+Running one row, or a filter that covers only part of a class, removes nothing in that class. Each test project runs in its own process and cleans only its own snapshot root. Skipped tests and helper methods don't keep a class from counting as run, and their folders stay.
+
+Imprint removes a folder only when it's certain no current test uses it. These cases keep their folders:
+
+- A folder that holds anything other than snapshot files stays.
+- Old rows are removed only when the rows come from `[InlineData]`, `[TestCase]` or `[DataRow]`, because then Imprint knows how many rows there are. Rows from `[MemberData]` or another source keep their folders.
+- A run-wide `verify`, e.g. in CI, only reports stale folders.
+- A test project that uses `#if` in its test files only reports them, because another build configuration might compile different tests.
+- A project that opens its own scopes with `Snapshots.Run`, `RunAsync` or `Begin` is cleaned only after those methods run. If they write into the snapshot root, it's never cleaned.
+- With `files.snapshotRootPath` set, folders outside this project's suites stay, because another project might share the root.
+
+When Imprint removes or finds stale folders, it prints one line to standard error and writes a report to `<build artifacts>/imprint/prune/`:
+
+```text
+Imprint removed 2 stale snapshot folders under D:\repo\tests\Api\__snapshots__. See D:\repo\artifacts\imprint\prune\4f2c9e1ab7d04c55a3e8b06f12d9c7e4-Api.Tests.json
+```
+
+Some runners, e.g. MSTest, show that line in the output of the test that was running instead of the console. The report lists each folder with what happened to it and why. If the removed files were committed, `git status` shows them as deleted and `git restore` brings them back.
+
+To only report stale folders, set `"prune": "report"` in `snapshots.config.json`, or `IMPRINT_PRUNE=report` for one run. `off` turns pruning off.
+
 ### Options
 
 Both calls take an optional name and options:
@@ -571,11 +603,15 @@ If you write a runner the task can't see, or a host that compiles test bodies it
 
 The MSBuild task moves your test body into a local function, so it can act after the body returns. Some method shapes have no reliable point where the body is done, such as `async void` and iterators. These fail the build with `IMP102` instead of being wrapped wrong. [Return types](docs/FRAMEWORKS.md#return-types) lists each one and its fix.
 
-### Old case folders
+### Pruning
 
-Changing a data row leaves its old folder behind. The case folder is part of the path, so editing an `[InlineData]` value creates a new folder, and Imprint stops visiting the old one. Nothing deletes it. There's no global orphan pruning, by design.
+Imprint removes [stale folders](#stale-folders) only from what a run covered completely. Some runs never cover a class completely, so its stale folders stay until a run does:
 
-Delete stale folders yourself. `git status` shows them as untracked or unchanged strays.
+- A test that is skipped while the tests run, e.g. through `SkipUnless`, or filtered by platform.
+- Tests split across machines by a filter, as in sharded CI.
+- A method that reaches a capture but is only ever called through a delegate.
+
+Entries a running test no longer captures follow the [update policy](#update-policies) instead. `missing` fails on them and `all` deletes them.
 
 ### Not included
 
@@ -584,7 +620,6 @@ Imprint doesn't include:
 - A scrubbing pipeline. Use a comparer or a smaller view, as [Volatile data](#volatile-data) shows.
 - Image or binary snapshot formats.
 - A CLI updater. Use `IMPRINT_UPDATE` with `dotnet test`.
-- Global orphan pruning.
 
 ### Storage
 
@@ -606,10 +641,6 @@ Keep names short, or set `core.longpaths=true`. Imprint helps in two ways:
 
 - The test folder defaults to the C# method name instead of the framework display name. `naming.useFrameworkDisplayNames` is `false`.
 - The case hash is left out whenever the readable label already tells rows apart.
-
-## Roadmap
-
-Pruning helpers for orphaned snapshot folders are an idea for now.
 
 ## License
 

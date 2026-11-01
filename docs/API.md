@@ -69,7 +69,7 @@ Settings come from seven layers:
 | Test initialization | `SnapshotTestOptions` passed to a custom runner | One test scope, including identity, storage, limits and preferences. |
 | Active test | Setters on `Snapshots.Current` | Defaults for all captures in the active test. Set them before its first capture. |
 | Assertion | `SnapshotOptions` passed to a capture | That capture and its nested values. |
-| Run environment | `IMPRINT_UPDATE`, `CI`, `IMPRINT_PROJECT_ROOT` | The update policy for the run, or a moved checkout. |
+| Run environment | `IMPRINT_UPDATE`, `IMPRINT_PRUNE`, `CI`, `IMPRINT_PROJECT_ROOT` | The update or prune policy for the run, or a moved checkout. |
 
 The layers don't all have the same settings. Attributes have only `Name` and `Update`. `Format` and a custom `Comparer` belong to single assertions.
 
@@ -105,6 +105,7 @@ Each setting has a default:
 | Empty test | Fails if the active scope captures nothing. |
 | Capture limits | Depth 64, 100,000 values and 4 MiB of UTF-8 output per snapshot. |
 | Lock timeout | 10 seconds. |
+| Pruning | `auto`. Removes stale folders within what a run covered completely. Only reports them in a run-wide `verify`. |
 
 Two limits are fixed. A test can have at most 1,024 captures. Its combined byte budget is the larger of 128 MiB and the configured per-snapshot byte limit.
 
@@ -119,6 +120,7 @@ Every key, with its default:
   "version": 1,
 
   "update": "missing",
+  "prune": "auto",
   "allowEmptyTests": false,
   "stringContent": "value",
 
@@ -164,6 +166,7 @@ The top-level keys are:
 | `$schema` | URL or path | Optional schema reference for your editor. See [Editor support](#editor-support). |
 | `version` | `1` | Defaults to `1` when left out. |
 | `update` | `verify`, `missing`, `all` | Update policy. [Update policies](../README.md#update-policies) describes each one. |
+| `prune` | `auto`, `report`, `off` | What happens to snapshot folders no current test uses. `report` lists them without removing them. [Stale folders](../README.md#stale-folders) describes when a folder counts as stale. |
 | `allowEmptyTests` | Boolean | Lets a test that captures nothing pass, instead of failing as a likely mistake. |
 | `stringContent` | `value`, `json` | How root strings are read. Override it per test or assertion when a project captures both kinds. |
 
@@ -320,16 +323,18 @@ Nullable properties inherit when you leave them out. There's no per-test `Format
 
 ### Run environment
 
-Almost everything is configured through the typed API: `[SnapshotSettings]`, `SnapshotOptions` and `snapshots.config.json`. Two things can't be, so Imprint reads them from the environment:
+Almost everything is configured through the typed API: `[SnapshotSettings]`, `SnapshotOptions` and `snapshots.config.json`. Three things can't be, so Imprint reads them from the environment:
 
 | Variable | Meaning |
 | --- | --- |
 | `IMPRINT_UPDATE` | `verify`, `missing` or `all` for the run. Wins over every test and assertion policy. |
+| `IMPRINT_PRUNE` | `auto`, `report` or `off` for the run. Wins over the project's `prune` key. |
 | `IMPRINT_PROJECT_ROOT` | An existing absolute project folder, for a moved checkout. Overrides the root carried by a generated or passed identity. |
 
 Each one has its reason:
 
 - `IMPRINT_UPDATE` - approving a change shouldn't need you to edit a committed file, then revert it. If you forget to revert `"update": "all"`, your whole suite stops checking anything without a warning. Imprint has no runner adapter, so no command-line flag or `.runsettings` value can reach it.
+- `IMPRINT_PRUNE` - checking what a run would remove, before letting it remove anything, shouldn't need a committed file change either.
 - `IMPRINT_PROJECT_ROOT` - the project path is baked in at compile time. This variable points it somewhere else when the tests run in a different place than they were built. E.g. you build in one container and test in another. It describes the environment, not a policy.
 
 Imprint also reads `CI`, which your CI provider sets for you. When it's `true` or `1` and `IMPRINT_UPDATE` isn't set, the run uses `Verify`. `false`, `0`, unset or blank doesn't.
