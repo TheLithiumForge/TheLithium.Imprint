@@ -41,6 +41,7 @@ internal sealed class WaylandDriver : IPlatformDriver
         }
 
         var compositor = await SwayCompositor.StartAsync(cancellationToken).ConfigureAwait(false);
+        WaylandSession session;
         try
         {
             var environment = LinuxEnvironment.For(app, plan, new Dictionary<string, string?>
@@ -52,21 +53,23 @@ internal sealed class WaylandDriver : IPlatformDriver
                 ["QT_QPA_PLATFORM"] = "wayland"
             });
             var process = OwnedProcess.Start(app.Executable, [.. app.Arguments, .. plan.ExtraArguments], environment, app.WorkingDirectory);
-            var session = new WaylandSession(compositor, process, settings);
-            try
-            {
-                await session.WaitForWindowAsync(cancellationToken).ConfigureAwait(false);
-                return session;
-            }
-            catch
-            {
-                await session.DisposeAsync().ConfigureAwait(false);
-                throw;
-            }
+            session = new WaylandSession(compositor, process, settings);
         }
         catch
         {
             await compositor.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+
+        // From here the session owns the compositor and the app, and disposing it stops both.
+        try
+        {
+            await session.WaitForWindowAsync(cancellationToken).ConfigureAwait(false);
+            return session;
+        }
+        catch
+        {
+            await session.DisposeAsync().ConfigureAwait(false);
             throw;
         }
     }
@@ -91,6 +94,7 @@ internal sealed class SwayCompositor : IAsyncDisposable
         """;
 
     private readonly OwnedProcess _sway;
+    private int _disposed;
 
     private SwayCompositor(string runtimeDirectory, string display, string socket, OwnedProcess sway)
     {
@@ -180,6 +184,11 @@ internal sealed class SwayCompositor : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
         await _sway.DisposeAsync().ConfigureAwait(false);
         Delete(RuntimeDirectory);
     }

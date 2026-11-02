@@ -4,6 +4,7 @@
 set -euo pipefail
 
 output="$(realpath -m "$1")"
+mkdir -p "$(dirname "$output")"
 here="$(cd "$(dirname "$0")" && pwd)"
 sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:?Set ANDROID_HOME to the Android SDK.}}"
 tools="$(ls -d "$sdk"/build-tools/*/ | sort -V | tail -n 1)"

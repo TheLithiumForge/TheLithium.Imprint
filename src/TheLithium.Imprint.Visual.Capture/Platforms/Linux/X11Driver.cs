@@ -27,6 +27,7 @@ internal sealed class X11Driver : IPlatformDriver
         }
 
         var display = await X11Display.StartAsync(cancellationToken).ConfigureAwait(false);
+        X11Session session;
         try
         {
             var environment = LinuxEnvironment.For(app, plan, new Dictionary<string, string?>
@@ -38,21 +39,23 @@ internal sealed class X11Driver : IPlatformDriver
                 ["QT_QPA_PLATFORM"] = "xcb"
             });
             var process = OwnedProcess.Start(app.Executable, [.. app.Arguments, .. plan.ExtraArguments], environment, app.WorkingDirectory);
-            var session = new X11Session(display, process, settings);
-            try
-            {
-                await session.WaitForWindowAsync(cancellationToken).ConfigureAwait(false);
-                return session;
-            }
-            catch
-            {
-                await session.DisposeAsync().ConfigureAwait(false);
-                throw;
-            }
+            session = new X11Session(display, process, settings);
         }
         catch
         {
             await display.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+
+        // From here the session owns the display and the app, and disposing it stops both.
+        try
+        {
+            await session.WaitForWindowAsync(cancellationToken).ConfigureAwait(false);
+            return session;
+        }
+        catch
+        {
+            await session.DisposeAsync().ConfigureAwait(false);
             throw;
         }
     }
@@ -98,6 +101,7 @@ internal sealed class X11Display : IAsyncDisposable
     private readonly OwnedProcess _server;
     private readonly OwnedProcess _manager;
     private readonly string _directory;
+    private int _disposed;
 
     private X11Display(string name, X11Authority authority, FileStream reservation, OwnedProcess server, OwnedProcess manager, nint connection)
     {
@@ -182,6 +186,12 @@ internal sealed class X11Display : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        // Closing a connection twice frees it twice, so a second dispose must do nothing.
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
         XCloseDisplay(Connection);
         await _manager.DisposeAsync().ConfigureAwait(false);
         await _server.DisposeAsync().ConfigureAwait(false);
