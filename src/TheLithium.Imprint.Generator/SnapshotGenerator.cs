@@ -21,6 +21,11 @@ public sealed partial class SnapshotGenerator : IIncrementalGenerator
         "Cannot generate a reflection-free writer for '{0}': {1}. Supply an explicit writer or project the value.",
         "TheLithium.Imprint", DiagnosticSeverity.Warning, true);
 
+    private static readonly DiagnosticDescriptor DedicatedCapture = new DiagnosticDescriptor(
+        "IMP002", "Snapshot type has its own capture method",
+        "'{0}' can't be captured with AssertSnapshot, because a generated writer would serialize its properties instead of its content. Call {1} instead.",
+        "TheLithium.Imprint", DiagnosticSeverity.Error, true);
+
     private sealed class Candidate
     {
         internal readonly InvocationExpressionSyntax Syntax;
@@ -75,7 +80,8 @@ public sealed partial class SnapshotGenerator : IIncrementalGenerator
 
         var name = Name(invocation.Expression);
         return name == "AssertSnapshot" || name == "UpdateSnapshot" || name == "Create"
-            || name == "Run" || name == "RunAsync" || name == "RunValueTask" || name == "Begin" || name == "Write";
+            || name == "Run" || name == "RunAsync" || name == "RunValueTask" || name == "Begin" || name == "Write"
+            || name == "AssertImage" || name == "UpdateImage";
     }
 
     private static string Name(ExpressionSyntax expression)
@@ -110,7 +116,7 @@ public sealed partial class SnapshotGenerator : IIncrementalGenerator
         var owner = definition.ContainingType.ToDisplayString();
         var explicitLifetime = owner == "TheLithium.Imprint.Snapshots" && (method.Name == "Run" || method.Name == "RunAsync" || method.Name == "Begin");
         var boundary = explicitLifetime || owner == "TheLithium.Imprint.Generation.TestExecution";
-        var capture = owner == "TheLithium.Imprint.SnapshotExtensions" && (method.Name == "AssertSnapshot" || method.Name == "UpdateSnapshot");
+        var capture = CompilerTypeFacts.IsCapture(definition.OriginalDefinition);
         var explicitWrite = owner == "TheLithium.Imprint.SnapshotWriters" && method.Name == "Write";
         explicitWrite |= owner == "TheLithium.Imprint.Generation.SnapshotCases" && method.Name == "Create";
         if (!boundary && !capture && !explicitWrite)

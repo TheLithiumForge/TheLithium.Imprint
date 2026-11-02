@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
+using TheLithium.Imprint.Build;
 
 namespace TheLithium.Imprint.Generator;
 
@@ -37,6 +38,12 @@ public sealed partial class SnapshotGenerator
 
             if (type.TypeKind == TypeKind.Error)
             {
+                return;
+            }
+
+            if (CompilerTypeFacts.DedicatedCapture(type) is { } assertion)
+            {
+                _context.ReportDiagnostic(Diagnostic.Create(DedicatedCapture, location, type.ToDisplayString(), assertion));
                 return;
             }
 

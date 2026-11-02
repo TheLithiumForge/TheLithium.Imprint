@@ -36,7 +36,7 @@ internal static class SnapshotCallGraph
                 }
 
                 calls.Add(symbol.OriginalDefinition, invoked);
-                if (invoked.Any(IsCapture) || symbol.GetAttributes().Any(attribute =>
+                if (invoked.Any(CompilerTypeFacts.IsCapture) || symbol.GetAttributes().Any(attribute =>
                     attribute.AttributeClass?.ToDisplayString() == "TheLithium.Imprint.SnapshotSettingsAttribute"))
                 {
                     reachable.Add(symbol.OriginalDefinition);
@@ -60,9 +60,6 @@ internal static class SnapshotCallGraph
         return reachable;
     }
 
-    private static bool IsCapture(IMethodSymbol method)
-        => method.ContainingType.ToDisplayString() == "TheLithium.Imprint.SnapshotExtensions"
-            && (method.Name == "AssertSnapshot" || method.Name == "UpdateSnapshot");
 
     private static bool IsExplicitLifetime(IMethodSymbol method)
         => method.ContainingType.ToDisplayString() == "TheLithium.Imprint.Snapshots"

@@ -56,6 +56,9 @@ public sealed class SnapshotScope : IDisposable
     /// <summary>Effective whole-test policy after environment and read-only enforcement.</summary>
     public SnapshotUpdate EffectiveUpdate => _settings.ResolveUpdate(SnapshotUpdate.Inherit, _update);
 
+    /// <summary>The resolved settings of this test, for format packages that need its project configuration.</summary>
+    internal EffectiveSettings ResolvedSettings => _settings;
+
     /// <summary>Effective comparison fields. Assign a patch before capture; unset fields retain their current values.</summary>
     public SnapshotComparison Comparison
     {
@@ -153,14 +156,10 @@ public sealed class SnapshotScope : IDisposable
 
                 var name = ResolveName(explicitName, expression);
                 var encoded = SnapshotEncoding.Encode(value, writer, _settings, representation);
-                _bytes += SnapshotEncoding.Utf8.GetByteCount(encoded.Text);
-                if (_bytes > Math.Max(_settings.MaxBytesPerSnapshot, SnapshotLimits.TestBytes))
-                {
-                    throw new SnapshotCaptureException("The captured test set exceeds its total size budget.");
-                }
-
+                var content = SnapshotFile.FromText(encoded.Text);
+                Count(content);
                 var extension = SnapshotFileNames.Extension(encoded.Format);
-                _values.Add(new(name, name + extension, encoded.Text, encoded.Format,
+                _values.Add(new(name, name + extension, content, encoded.Format,
                     options.Update, comparison, options.Comparer));
             }
             catch (Exception error)
@@ -168,6 +167,58 @@ public sealed class SnapshotScope : IDisposable
                 _captureFailure ??= error;
                 throw;
             }
+        }
+    }
+
+    /// <summary>Stages a binary snapshot under the same naming, limit and approval rules as a text capture.</summary>
+    internal void CaptureBinary(BinaryCapture capture)
+    {
+        lock (_gate)
+        {
+            EnsureOpen();
+            _started = true;
+            try
+            {
+                _settings.Cancellation.ThrowIfCancellationRequested();
+                Settings.ValidateUpdate(capture.Update);
+                if (!SnapshotFileNames.IsBinary(capture.Extension) || capture.Extension != Path.GetExtension(capture.Extension))
+                {
+                    throw new SnapshotCaptureException($"Unsupported binary snapshot extension: {capture.Extension}");
+                }
+
+                if (capture.Content.Length > _settings.MaxBytesPerSnapshot)
+                {
+                    throw new SnapshotCaptureException($"The capture exceeds the {_settings.MaxBytesPerSnapshot}-byte snapshot limit. Raise limits.maxBytesPerSnapshot if it's expected.");
+                }
+
+                if (_values.Count >= SnapshotLimits.MaximumEntries)
+                {
+                    throw new SnapshotCaptureException($"A test may capture at most {SnapshotLimits.MaximumEntries} values.");
+                }
+
+                var name = ResolveName(capture.Name, capture.Expression);
+                var content = SnapshotFile.FromBytes(capture.Content);
+                Count(content);
+                _values.Add(new(name, name + capture.Extension.ToLowerInvariant(), content, SnapshotFormat.Auto,
+                    capture.Update, _comparison, Comparer: null)
+                {
+                    BinaryComparer = capture.Comparer
+                });
+            }
+            catch (Exception error)
+            {
+                _captureFailure ??= error;
+                throw;
+            }
+        }
+    }
+
+    private void Count(SnapshotFile content)
+    {
+        _bytes += content.Content.Length;
+        if (_bytes > Math.Max(_settings.MaxBytesPerSnapshot, SnapshotLimits.TestBytes))
+        {
+            throw new SnapshotCaptureException("The captured test set exceeds its total size budget.");
         }
     }
 
@@ -236,7 +287,7 @@ public sealed class SnapshotScope : IDisposable
                 if (!plan.Authorized)
                 {
                     var entries = plan.Entries(approved: false);
-                    TryWriteArtifacts(entries, incomplete: false, error: null);
+                    TryWriteArtifacts(entries, plan.Attachments().ToArray(), incomplete: false, error: null);
                     throw new SnapshotMismatchException(new(_settings.DisplayName, false, entries)
                     {
                         ArtifactDirectory = ArtifactDirectory,
@@ -274,7 +325,7 @@ public sealed class SnapshotScope : IDisposable
             }
 
             _state = State.Aborted;
-            TryWriteArtifacts([], incomplete: true, error?.Message);
+            TryWriteArtifacts([], [], incomplete: true, error?.Message);
             if (error is not null)
             {
                 try
@@ -293,7 +344,7 @@ public sealed class SnapshotScope : IDisposable
         }
     }
 
-    private void TryWriteArtifacts(IReadOnlyList<SnapshotEntryResult> entries, bool incomplete, string? error)
+    private void TryWriteArtifacts(IReadOnlyList<SnapshotEntryResult> entries, IReadOnlyList<ArtifactFile> attachments, bool incomplete, string? error)
     {
         if (_artifactsWritten)
         {
@@ -310,6 +361,7 @@ public sealed class SnapshotScope : IDisposable
                 Values = _values,
                 Baseline = _baseline,
                 Entries = entries,
+                Attachments = attachments,
                 Incomplete = incomplete,
                 Error = error
             });
