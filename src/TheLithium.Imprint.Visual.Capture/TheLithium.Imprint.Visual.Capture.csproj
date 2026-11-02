@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Screenshot tests for TheLithium.Imprint: starts a desktop or mobile app, waits for its window to settle and captures it through the OS's own tools, for any UI framework. Native AOT and trim compatible.</Description>
+    <IsAotCompatible>true</IsAotCompatible>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>snapshot;testing;screenshot;visual;nativeaot;imprint</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="TheLithium.Imprint.Visual.Tests" />
+    <ProjectReference Include="../TheLithium.Imprint.Visual/TheLithium.Imprint.Visual.csproj" />
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

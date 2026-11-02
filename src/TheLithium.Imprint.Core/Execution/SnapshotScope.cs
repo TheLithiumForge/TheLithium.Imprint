@@ -31,6 +31,7 @@ public sealed class SnapshotScope : IDisposable
     private Exception? _captureFailure;
     private bool _artifactsWritten;
     private string? _artifactError;
+    private readonly List<ArtifactFile> _diagnostics = [];
 
     internal SnapshotScope(EffectiveSettings settings, SnapshotScope? previous)
     {
@@ -214,6 +215,22 @@ public sealed class SnapshotScope : IDisposable
         }
     }
 
+    /// <summary>
+    /// Keeps a file that explains a failure before any assertion, e.g. the last frames of a capture that never settled.
+    /// It's written with the failure artifacts if the test fails, and dropped if it passes.
+    /// </summary>
+    internal void AddDiagnostic(ArtifactFile file)
+    {
+        lock (_gate)
+        {
+            EnsureOpen();
+            if (_diagnostics.Count < SnapshotLimits.MaximumEntries)
+            {
+                _diagnostics.Add(file);
+            }
+        }
+    }
+
     private void Count(SnapshotFile content)
     {
         _bytes += content.Content.Length;
@@ -288,7 +305,7 @@ public sealed class SnapshotScope : IDisposable
                 if (!plan.Authorized)
                 {
                     var entries = plan.Entries(approved: false);
-                    TryWriteArtifacts(entries, plan.Attachments().ToArray(), incomplete: false, error: null);
+                    TryWriteArtifacts(entries, [.. plan.Attachments(), .. _diagnostics], incomplete: false, error: null);
                     throw new SnapshotMismatchException(new(_settings.DisplayName, false, entries)
                     {
                         ArtifactDirectory = ArtifactDirectory,
@@ -326,7 +343,7 @@ public sealed class SnapshotScope : IDisposable
             }
 
             _state = State.Aborted;
-            TryWriteArtifacts([], [], incomplete: true, error?.Message);
+            TryWriteArtifacts([], [.. _diagnostics], incomplete: true, error?.Message);
             if (error is not null)
             {
                 try

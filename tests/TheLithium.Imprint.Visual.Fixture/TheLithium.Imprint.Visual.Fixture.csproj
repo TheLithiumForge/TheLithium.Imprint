@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsAotCompatible>true</IsAotCompatible>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- A plain window app for the capture drivers' tests. It captures nothing, so it needs no Imprint integration. -->
+    <ImprintInstrument>false</ImprintInstrument>
+  </PropertyGroup>
+</Project>

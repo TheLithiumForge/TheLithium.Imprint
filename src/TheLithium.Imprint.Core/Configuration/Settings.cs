@@ -204,7 +204,7 @@ internal static class Settings
         _ => throw new SnapshotConfigurationException("Update must be 'verify', 'missing', or 'all'.")
     };
 
-    private static bool EnvironmentFlag(string name)
+    internal static bool EnvironmentFlag(string name)
     {
         var value = Environment.GetEnvironmentVariable(name);
         if (string.IsNullOrWhiteSpace(value))
