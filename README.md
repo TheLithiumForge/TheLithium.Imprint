@@ -36,6 +36,8 @@ The package has three parts:
 
 `TheLithium.Imprint.Core` is also published on its own. You only need it to write a custom test runner, as [Custom runners](#custom-runners) describes.
 
+For image and screenshot snapshots, add `TheLithium.Imprint.Visual.Capture` too, as [Images and screenshots](#images-and-screenshots) describes.
+
 ## Quick start
 
 Add `AssertSnapshot` to a value in a test:
@@ -522,6 +524,18 @@ Some runners, e.g. MSTest, show that line in the output of the test that was run
 
 To only report stale folders, set `"prune": "report"` in `snapshots.config.json`, or `IMPRINT_PRUNE=report` for one run. `off` turns pruning off.
 
+### Images and screenshots
+
+`AssertImage` snapshots an image as a PNG, in the same test folder and under the same update policies as JSON. `TheLithium.Imprint.Visual.Capture` adds screenshots: it starts your app, waits until its window stops changing, and captures it from outside, so it works with any UI framework.
+
+```csharp
+await using var app = await VisualApp.StartAsync(new WindowsApp(path) { Arguments = ["--screen", "settings"] });
+var settings = await app.CaptureAsync();
+settings.AssertImage(); // settings.png
+```
+
+It captures Windows, Linux on X11 and Wayland, macOS, Android and the iOS simulator. The comparison is exact by default, and a failure writes a diff image next to the received and expected files. [Images and screenshots](docs/VISUAL.md) covers platforms, tolerances, stable capture and CI.
+
 ### Options
 
 Both calls take an optional name and options:
@@ -618,7 +632,6 @@ Entries a running test no longer captures follow the [update policy](#update-pol
 Imprint doesn't include:
 
 - A scrubbing pipeline. Use a comparer or a smaller view, as [Volatile data](#volatile-data) shows.
-- Image or binary snapshot formats.
 - A CLI updater. Use `IMPRINT_UPDATE` with `dotnet test`.
 
 ### Storage
