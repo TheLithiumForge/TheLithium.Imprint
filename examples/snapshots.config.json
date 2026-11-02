@@ -36,5 +36,23 @@
     "maxValuesPerSnapshot": 100000,
     "maxBytesPerSnapshot": 4194304,
     "lockTimeoutSeconds": 10
+  },
+
+  "visual": {
+    "captureSource": "external",
+    "maxBytesPerImage": 33554432,
+    "maxPixelsPerImage": 8388608,
+    "comparison": {
+      "channelTolerance": 0,
+      "maxDifferingPercent": 0,
+      "ignoreAntialiasing": false
+    },
+    "stability": {
+      "matchingFrames": 3,
+      "intervalMilliseconds": 100,
+      "minimumDurationMilliseconds": 500,
+      "timeoutSeconds": 10
+    },
+    "platforms": {}
   }
 }

@@ -95,7 +95,67 @@ internal static class ProjectConfigurationReader
             MaxNestingDepth = file.Limits.MaxNestingDepth,
             MaxValuesPerSnapshot = file.Limits.MaxValuesPerSnapshot,
             MaxBytesPerSnapshot = file.Limits.MaxBytesPerSnapshot,
-            LockTimeoutSeconds = file.Limits.LockTimeoutSeconds
+            LockTimeoutSeconds = file.Limits.LockTimeoutSeconds,
+            Visual = ResolveVisual(file.Visual)
         };
     }
+
+    private static VisualSettings ResolveVisual(VisualFileConfiguration visual)
+    {
+        if (visual.CaptureSource != VisualCaptureSource.External)
+        {
+            throw new SnapshotConfigurationException("visual.captureSource must be external.");
+        }
+        if (visual.MaxBytesPerImage is < 1 or > SnapshotLimits.MaximumBytes)
+        {
+            throw new SnapshotConfigurationException($"visual.maxBytesPerImage must be 1..{SnapshotLimits.MaximumBytes}.");
+        }
+        if (visual.MaxPixelsPerImage is < 1 or > SnapshotLimits.MaximumImagePixels)
+        {
+            throw new SnapshotConfigurationException($"visual.maxPixelsPerImage must be 1..{SnapshotLimits.MaximumImagePixels}.");
+        }
+
+        var stability = visual.Stability;
+        if (stability.MatchingFrames is < 1 or > 100 || stability.IntervalMilliseconds is < 10 or > 10_000
+            || stability.MinimumDurationMilliseconds is < 0 or > 60_000 || stability.TimeoutSeconds is < 1 or > 600)
+        {
+            throw new SnapshotConfigurationException(
+                "visual.stability needs matchingFrames 1..100, intervalMilliseconds 10..10000, minimumDurationMilliseconds 0..60000 and timeoutSeconds 1..600.");
+        }
+
+        var platforms = new Dictionary<string, ImageComparisonSettings>(StringComparer.Ordinal);
+        foreach (var platform in visual.Platforms)
+        {
+            if (!VisualPlatformNames.All.Contains(platform.Key))
+            {
+                var known = string.Join(", ", VisualPlatformNames.All.Order(StringComparer.Ordinal));
+                throw new SnapshotConfigurationException($"visual.platforms.{platform.Key} isn't a platform. Use one of {known}.");
+            }
+            platforms.Add(platform.Key, ImageComparison(platform.Value.Comparison, $"visual.platforms.{platform.Key}.comparison"));
+        }
+
+        return new()
+        {
+            CaptureSource = visual.CaptureSource,
+            MaxBytesPerImage = visual.MaxBytesPerImage,
+            MaxPixelsPerImage = visual.MaxPixelsPerImage,
+            Comparison = ImageComparison(visual.Comparison, "visual.comparison"),
+            Stability = new(stability.MatchingFrames, Milliseconds(stability.IntervalMilliseconds),
+                Milliseconds(stability.MinimumDurationMilliseconds), Seconds(stability.TimeoutSeconds)),
+            Platforms = platforms
+        };
+    }
+
+    private static ImageComparisonSettings ImageComparison(ImageComparisonFileConfiguration comparison, string path)
+    {
+        if (comparison.ChannelTolerance is < 0 or > 255 || comparison.MaxDifferingPercent is < 0 or > 100)
+        {
+            throw new SnapshotConfigurationException($"{path} needs channelTolerance 0..255 and maxDifferingPercent 0..100.");
+        }
+        return new(comparison.ChannelTolerance, comparison.MaxDifferingPercent, comparison.IgnoreAntialiasing);
+    }
+
+    private static TimeSpan? Milliseconds(int? value) => value is { } milliseconds ? TimeSpan.FromMilliseconds(milliseconds) : null;
+
+    private static TimeSpan? Seconds(int? value) => value is { } seconds ? TimeSpan.FromSeconds(seconds) : null;
 }

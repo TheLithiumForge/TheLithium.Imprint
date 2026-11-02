@@ -92,6 +92,8 @@ internal static class Settings
             MaxNestingDepth = depth,
             MaxValuesPerSnapshot = nodes,
             MaxBytesPerSnapshot = bytes,
+            MaxBytesPerImage = config.Visual.MaxBytesPerImage,
+            Visual = config.Visual,
             LockTimeout = TimeSpan.FromSeconds(config.LockTimeoutSeconds),
             Cancellation = options.CancellationToken
         };

@@ -186,9 +186,10 @@ public sealed class SnapshotScope : IDisposable
                     throw new SnapshotCaptureException($"Unsupported binary snapshot extension: {capture.Extension}");
                 }
 
-                if (capture.Content.Length > _settings.MaxBytesPerSnapshot)
+                if (capture.Content.Length > _settings.MaxBytesFor(capture.Extension))
                 {
-                    throw new SnapshotCaptureException($"The capture exceeds the {_settings.MaxBytesPerSnapshot}-byte snapshot limit. Raise limits.maxBytesPerSnapshot if it's expected.");
+                    throw new SnapshotCaptureException(
+                        $"The capture exceeds the {_settings.MaxBytesFor(capture.Extension)}-byte image limit. Raise visual.maxBytesPerImage if it's expected.");
                 }
 
                 if (_values.Count >= SnapshotLimits.MaximumEntries)
@@ -216,7 +217,7 @@ public sealed class SnapshotScope : IDisposable
     private void Count(SnapshotFile content)
     {
         _bytes += content.Content.Length;
-        if (_bytes > Math.Max(_settings.MaxBytesPerSnapshot, SnapshotLimits.TestBytes))
+        if (_bytes > _settings.TestBudget)
         {
             throw new SnapshotCaptureException("The captured test set exceeds its total size budget.");
         }

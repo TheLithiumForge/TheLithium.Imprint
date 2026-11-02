@@ -91,7 +91,7 @@ internal sealed class SnapshotPlan(BaselineState baseline, IReadOnlyList<Snapsho
         if (value.BinaryComparer is { } binary)
         {
             return stored.SameContent(value.Content)
-                ? BinaryComparisonResult.Match
+                ? BinaryComparisonResult.Same
                 : binary.Compare(stored.Content, value.Content.Content, settings.Cancellation);
         }
 
@@ -102,8 +102,8 @@ internal sealed class SnapshotPlan(BaselineState baseline, IReadOnlyList<Snapsho
     }
 
     /// <summary>
-    /// Under All, text is rewritten whenever it differs. A binary snapshot is rewritten only when it no longer matches,
-    /// so a capture within tolerance, or a re-encoding of the same pixels, leaves the file and its history alone.
+    /// Under All, a capture is written whenever its content differs, as text always was. A binary snapshot whose decoded
+    /// content is identical, e.g. the same pixels compressed by another zlib, keeps the stored file, so it never churns.
     /// </summary>
     private static bool Writes(SnapshotUpdate policy, string existing, SnapshotFile stored, CapturedValue value, BinaryComparisonResult comparison)
     {
@@ -117,6 +117,6 @@ internal sealed class SnapshotPlan(BaselineState baseline, IReadOnlyList<Snapsho
             return true;
         }
 
-        return value.BinaryComparer is null ? !stored.SameContent(value.Content) : !comparison.Equal;
+        return value.BinaryComparer is null ? !stored.SameContent(value.Content) : !comparison.Identical;
     }
 }

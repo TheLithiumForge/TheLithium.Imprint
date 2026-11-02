@@ -35,4 +35,5 @@ internal sealed record ProjectConfiguration
     internal int MaxValuesPerSnapshot { get; init; } = SnapshotLimits.DefaultNodes;
     internal int MaxBytesPerSnapshot { get; init; } = SnapshotLimits.DefaultBytes;
     internal int LockTimeoutSeconds { get; init; } = 10;
+    internal VisualSettings Visual { get; init; } = new();
 }

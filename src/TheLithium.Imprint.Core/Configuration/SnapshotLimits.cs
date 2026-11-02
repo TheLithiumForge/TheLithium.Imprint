@@ -11,6 +11,9 @@ internal static class SnapshotLimits
     internal const int DefaultBytes = 4 * 1024 * 1024;
     internal const int MaximumBytes = 256 * 1024 * 1024;
     internal const int TestBytes = 128 * 1024 * 1024;
+    internal const int DefaultImageBytes = 32 * 1024 * 1024;
+    internal const int DefaultImagePixels = 8 * 1024 * 1024;
+    internal const int MaximumImagePixels = 16384 * 16384;
     internal const int ConfigurationBytes = 1024 * 1024;
     internal const int ConfigurationDepth = 16;
     internal const int JournalMarkerBytes = 128;

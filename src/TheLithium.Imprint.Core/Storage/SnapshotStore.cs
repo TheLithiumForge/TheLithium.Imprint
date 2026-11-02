@@ -86,11 +86,12 @@ internal sealed class SnapshotStore
             }
             DurableWrite(Path.Combine(_journal, "before.fingerprint"), current.Fingerprint);
             _settings.Cancellation.ThrowIfCancellationRequested();
+            var marker = JournalMarkerFor(current.Files, desired);
             // No baseline mutation is allowed before this marker has been flushed.
-            DurableWrite(Path.Combine(_journal, "prepared"), SnapshotProtocol.JournalMarker);
+            DurableWrite(Path.Combine(_journal, "prepared"), marker);
             // Do not interrupt this small commit section with cancellation. Finish or roll back.
             Apply(desired);
-            DurableWrite(Path.Combine(_journal, "committed"), SnapshotProtocol.JournalMarker);
+            DurableWrite(Path.Combine(_journal, "committed"), marker);
         }
         catch (Exception error)
         {
@@ -121,7 +122,7 @@ internal sealed class SnapshotStore
         return new(files, Fingerprint(files));
     }
 
-    private static string Fingerprint(Dictionary<string, SnapshotFile> files)
+    internal static string Fingerprint(Dictionary<string, SnapshotFile> files)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         foreach (var file in files.OrderBy(x => x.Key, StringComparer.Ordinal))
@@ -163,9 +164,9 @@ internal sealed class SnapshotStore
             }
 
             SnapshotPaths.CheckLink(path);
-            var value = SnapshotFile.Read(name, SnapshotFileReader.ReadBytes(path, _settings.MaxBytesPerSnapshot));
+            var value = SnapshotFile.Read(name, SnapshotFileReader.ReadBytes(path, _settings.MaxBytesFor(name)));
             total += value.Content.Length;
-            if (total > Math.Max(_settings.MaxBytesPerSnapshot, SnapshotLimits.TestBytes))
+            if (total > _settings.TestBudget)
             {
                 throw new SnapshotException("The total baseline size for this test exceeds its safety budget.");
             }
@@ -190,7 +191,7 @@ internal sealed class SnapshotStore
 
         if (File.Exists(Path.Combine(_journal, "committed")))
         {
-            if (SnapshotFileReader.ReadText(Path.Combine(_journal, "committed"), SnapshotLimits.JournalMarkerBytes) != SnapshotProtocol.JournalMarker)
+            if (!IsJournalMarker(SnapshotFileReader.ReadText(Path.Combine(_journal, "committed"), SnapshotLimits.JournalMarkerBytes)))
             {
                 throw new SnapshotConflictException($"Unrecognized snapshot journal version: {_journal}");
             }
@@ -210,7 +211,7 @@ internal sealed class SnapshotStore
                 throw new SnapshotConflictException($"An interrupted snapshot update needs recovery. Run locally with writes enabled before verification: {_journal}");
             }
 
-            if (SnapshotFileReader.ReadText(Path.Combine(_journal, "prepared"), SnapshotLimits.JournalMarkerBytes) != SnapshotProtocol.JournalMarker
+            if (!IsJournalMarker(SnapshotFileReader.ReadText(Path.Combine(_journal, "prepared"), SnapshotLimits.JournalMarkerBytes))
                 || !Directory.Exists(Path.Combine(_journal, "before"))
                 || !File.Exists(Path.Combine(_journal, "before.fingerprint")))
             {
@@ -231,6 +232,13 @@ internal sealed class SnapshotStore
             Directory.Delete(_journal, recursive: true);
         }
     }
+
+    /// <summary>The binary marker whenever the backup or the new set holds a binary snapshot.</summary>
+    internal static string JournalMarkerFor(Dictionary<string, SnapshotFile> before, Dictionary<string, SnapshotFile> desired)
+        => before.Values.Concat(desired.Values).Any(file => !file.IsText) ? SnapshotProtocol.BinaryJournalMarker : SnapshotProtocol.JournalMarker;
+
+    private static bool IsJournalMarker(string marker)
+        => marker is SnapshotProtocol.JournalMarker or SnapshotProtocol.BinaryJournalMarker;
 
     private void Apply(Dictionary<string, SnapshotFile> files)
     {
