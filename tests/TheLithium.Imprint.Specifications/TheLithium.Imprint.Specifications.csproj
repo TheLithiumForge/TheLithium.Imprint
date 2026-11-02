@@ -10,9 +10,9 @@
     <Compile Update="Specs.cs;AdditionalSpecs.cs;SecuritySpecs.cs;JsonBoundarySpecs.cs;RepresentationSpecs.cs;TransactionSpecs.cs;VisualSpecs.cs" ImprintInstrument="false" />
   </ItemGroup>
   <ItemGroup Condition="'$(UsePackageReferences)' != 'true'">
-    <ProjectReference Include="../../src/TheLithium.Imprint.Visual/TheLithium.Imprint.Visual.csproj" />
+    <ProjectReference Include="../../src/TheLithium.Imprint.Visual.Capture/TheLithium.Imprint.Visual.Capture.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(UsePackageReferences)' == 'true'">
-    <PackageReference Include="TheLithium.Imprint.Visual" Version="$(Version)" />
+    <PackageReference Include="TheLithium.Imprint.Visual.Capture" Version="$(Version)" />
   </ItemGroup>
 </Project>

@@ -21,3 +21,7 @@ jobs:
   aot:
     name: Native AOT tests
     uses: ./.github/workflows/test-aot.yml
+
+  visual:
+    name: Visual capture tests
+    uses: ./.github/workflows/test-visual.yml

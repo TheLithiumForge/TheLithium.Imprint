@@ -89,14 +89,25 @@ public sealed class CaptureLogicTests
     [InlineData(null, "true", "missing", VisualCheckStatus.Missing)]
     [InlineData(null, "true", null, VisualCheckStatus.Ready)]
     [InlineData("android", null, null, VisualCheckStatus.NotRequested)]
-    [InlineData("windows, android", null, "missing", VisualCheckStatus.Missing)]
-    [InlineData("WINDOWS", "true", null, VisualCheckStatus.Ready)]
-    public async Task PlatformSelectionNeverLetsCiSkipSilently(string? platforms, string? ci, string? problem, VisualCheckStatus expected)
+    [InlineData("HOST, android", null, "missing", VisualCheckStatus.Missing)]
+    [InlineData("HOST", "true", null, VisualCheckStatus.Ready)]
+    [InlineData("none", "true", "missing", VisualCheckStatus.NotRequested)]
+    public async Task PlatformSelectionNeverLetsCiSkipItsOwnPlatform(string? platforms, string? ci, string? problem, VisualCheckStatus expected)
     {
-        using var listed = new EnvironmentValue(PlatformSelection.Variable, platforms);
+        var host = HostTarget();
+        using var listed = new EnvironmentValue(PlatformSelection.Variable, platforms?.Replace("HOST", PlatformNames.Of(host.Platform), StringComparison.Ordinal));
         using var build = new EnvironmentValue("CI", ci);
-        var check = await PlatformSelection.CheckAsync(new WindowsApp("app.exe"), new FakeDriver(problem), CancellationToken.None);
+        var check = await PlatformSelection.CheckAsync(host, new FakeDriver(problem), CancellationToken.None);
         Assert.Equal(expected, check.Status);
+    }
+
+    [Fact]
+    public async Task CiSkipsAPlatformOfAnotherMachine()
+    {
+        using var listed = new EnvironmentValue(PlatformSelection.Variable, null);
+        using var build = new EnvironmentValue("CI", "true");
+        var check = await PlatformSelection.CheckAsync(new AndroidApp("app"), new FakeDriver("No device."), CancellationToken.None);
+        Assert.Equal(VisualCheckStatus.NotRequested, check.Status);
     }
 
     [Fact]
@@ -124,6 +135,16 @@ public sealed class CaptureLogicTests
     }
 
     private static RgbaImage Solid(byte red) => RgbaImage.FromPixels(1, 1, [Rgba32.Opaque(red, 0, 0)]);
+
+    /// <summary>A target on this machine's own desktop platform.</summary>
+    private static AppTarget HostTarget()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return new WindowsApp("app.exe");
+        }
+        return OperatingSystem.IsMacOS() ? new MacApp("app") : new LinuxApp("app");
+    }
 
     private sealed class FakeDriver(string? problem) : IPlatformDriver
     {

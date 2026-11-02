@@ -120,8 +120,8 @@ internal sealed class SwayCompositor : IAsyncDisposable
     {
         // A short path under /tmp, because a Unix socket path is limited to about 100 bytes.
         var runtime = Path.Combine("/tmp", "imprint-wl-" + Guid.NewGuid().ToString("N")[..12]);
-        Directory.CreateDirectory(runtime);
-        File.SetUnixFileMode(runtime, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        // Only this user can reach the compositor's sockets in it.
+        Directory.CreateDirectory(runtime, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         var config = Path.Combine(runtime, "sway.config");
         await File.WriteAllTextAsync(config, Config, cancellationToken).ConfigureAwait(false);
         var sway = OwnedProcess.Start(ToolLocator.Find("sway") ?? "sway", ["--config", config], new Dictionary<string, string?>

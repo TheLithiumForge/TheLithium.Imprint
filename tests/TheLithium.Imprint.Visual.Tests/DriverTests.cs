@@ -9,7 +9,6 @@ namespace TheLithium.Imprint.Visual.Tests;
 /// </summary>
 public sealed class DriverTests
 {
-    private static readonly Rgba32 Red = Rgba32.Opaque(220, 30, 30);
     private static readonly Rgba32 Green = Rgba32.Opaque(40, 180, 90);
 
     [Theory]
@@ -28,10 +27,10 @@ public sealed class DriverTests
         Assert.Equal(platform, screenshot.Platform);
         Assert.Equal(CaptureSource.External, screenshot.Source);
 
-        // The fixture is 400x300 points, half red and half green. Scale and window frames vary, so look for the
-        // two halves anywhere, side by side, rather than at fixed coordinates.
-        var red = Region(screenshot.Image, Red);
-        var green = Region(screenshot.Image, Green);
+        // The fixture is 400x300 points, half red and half green. Scale, window frames and display color spaces
+        // vary, so look for the two halves by their strongest channel anywhere, side by side.
+        var red = Region(screenshot.Image, pixel => pixel.R > 150 && pixel.G < 110 && pixel.B < 110);
+        var green = Region(screenshot.Image, pixel => pixel.G > 120 && pixel.R < 130 && pixel.B < 160);
         Assert.True(red.Count >= 200 * 300 * 9 / 10, $"Found {red.Count} red pixels in a {screenshot.Image.Width}x{screenshot.Image.Height} capture.");
         Assert.True(green.Count >= 200 * 300 * 9 / 10, $"Found {green.Count} green pixels in a {screenshot.Image.Width}x{screenshot.Image.Height} capture.");
         Assert.True(red.MeanX < green.MeanX, "The red half should be left of the green half.");
@@ -116,8 +115,8 @@ public sealed class DriverTests
         return Path.Combine(bin, "TheLithium.Imprint.Visual.Fixture", pivot, name);
     }
 
-    /// <summary>How many pixels are within 6 levels of a color, and their mean column.</summary>
-    private static (int Count, double MeanX) Region(RgbaImage image, Rgba32 color)
+    /// <summary>How many pixels match, and their mean column.</summary>
+    private static (int Count, double MeanX) Region(RgbaImage image, Func<Rgba32, bool> matches)
     {
         var count = 0;
         double sum = 0;
@@ -125,8 +124,7 @@ public sealed class DriverTests
         {
             for (var x = 0; x < image.Width; x++)
             {
-                var pixel = image[x, y];
-                if (Math.Abs(pixel.R - color.R) <= 6 && Math.Abs(pixel.G - color.G) <= 6 && Math.Abs(pixel.B - color.B) <= 6)
+                if (matches(image[x, y]))
                 {
                     count++;
                     sum += x;

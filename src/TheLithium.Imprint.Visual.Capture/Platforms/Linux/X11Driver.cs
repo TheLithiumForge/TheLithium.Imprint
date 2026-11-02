@@ -32,6 +32,7 @@ internal sealed class X11Driver : IPlatformDriver
             var environment = LinuxEnvironment.For(app, plan, new Dictionary<string, string?>
             {
                 ["DISPLAY"] = display.Name,
+                ["XAUTHORITY"] = display.AuthorityFile,
                 ["WAYLAND_DISPLAY"] = null,
                 ["GDK_BACKEND"] = "x11",
                 ["QT_QPA_PLATFORM"] = "xcb"
@@ -86,17 +87,23 @@ internal sealed class X11Driver : IPlatformDriver
     }
 }
 
-/// <summary>An Xvfb server with Openbox on a free display number, reserved by a machine-wide lock.</summary>
+/// <summary>
+/// An Xvfb server with Openbox on a free display number, reserved by a machine-wide lock. The server accepts only
+/// clients with its random cookie, kept in an Xauthority file only this user can read.
+/// </summary>
 [SupportedOSPlatform("linux")]
 internal sealed class X11Display : IAsyncDisposable
 {
     private readonly FileStream _reservation;
     private readonly OwnedProcess _server;
     private readonly OwnedProcess _manager;
+    private readonly string _directory;
 
-    private X11Display(string name, FileStream reservation, OwnedProcess server, OwnedProcess manager, nint connection)
+    private X11Display(string name, X11Authority authority, FileStream reservation, OwnedProcess server, OwnedProcess manager, nint connection)
     {
         Name = name;
+        AuthorityFile = authority.File;
+        _directory = authority.Directory;
         _reservation = reservation;
         _server = server;
         _manager = manager;
@@ -104,6 +111,12 @@ internal sealed class X11Display : IAsyncDisposable
     }
 
     internal string Name
+    {
+        get;
+    }
+
+    /// <summary>The Xauthority file with this display's cookie, for XAUTHORITY.</summary>
+    internal string AuthorityFile
     {
         get;
     }
@@ -130,14 +143,16 @@ internal sealed class X11Display : IAsyncDisposable
             }
 
             var name = string.Create(CultureInfo.InvariantCulture, $":{number}");
+            var authority = X11Authority.Create(number);
             var server = OwnedProcess.Start(ToolLocator.Find("Xvfb") ?? "Xvfb",
-                [name, "-screen", "0", $"{X11Driver.Width}x{X11Driver.Height}x24", "-nolisten", "tcp", "-noreset"],
+                [name, "-auth", authority.File, "-screen", "0", $"{X11Driver.Width}x{X11Driver.Height}x24", "-nolisten", "tcp", "-noreset"],
                 new Dictionary<string, string?>(), null);
-            var connection = await ConnectAsync(name, server, cancellationToken).ConfigureAwait(false);
+            var connection = await ConnectAsync(name, authority, server, cancellationToken).ConfigureAwait(false);
             if (connection == 0)
             {
                 await server.DisposeAsync().ConfigureAwait(false);
                 await reservation.DisposeAsync().ConfigureAwait(false);
+                authority.Delete();
                 continue;
             }
 
@@ -145,9 +160,9 @@ internal sealed class X11Display : IAsyncDisposable
             try
             {
                 manager = OwnedProcess.Start(ToolLocator.Find("openbox") ?? "openbox", ["--sm-disable"],
-                    new Dictionary<string, string?> { ["DISPLAY"] = name }, null);
+                    new Dictionary<string, string?> { ["DISPLAY"] = name, ["XAUTHORITY"] = authority.File }, null);
                 await WaitForManagerAsync(connection, manager, cancellationToken).ConfigureAwait(false);
-                return new(name, reservation, server, manager, connection);
+                return new(name, authority, reservation, server, manager, connection);
             }
             catch
             {
@@ -158,6 +173,7 @@ internal sealed class X11Display : IAsyncDisposable
                 }
                 await server.DisposeAsync().ConfigureAwait(false);
                 await reservation.DisposeAsync().ConfigureAwait(false);
+                authority.Delete();
                 throw;
             }
         }
@@ -170,10 +186,11 @@ internal sealed class X11Display : IAsyncDisposable
         await _manager.DisposeAsync().ConfigureAwait(false);
         await _server.DisposeAsync().ConfigureAwait(false);
         await _reservation.DisposeAsync().ConfigureAwait(false);
+        new X11Authority(_directory, AuthorityFile, []).Delete();
     }
 
     /// <summary>Connects once Xvfb accepts clients, or returns 0 if it exited, e.g. because the display was taken.</summary>
-    private static async Task<nint> ConnectAsync(string name, OwnedProcess server, CancellationToken cancellationToken)
+    private static async Task<nint> ConnectAsync(string name, X11Authority authority, OwnedProcess server, CancellationToken cancellationToken)
     {
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
         while (DateTime.UtcNow < deadline)
@@ -182,7 +199,7 @@ internal sealed class X11Display : IAsyncDisposable
             {
                 return 0;
             }
-            var connection = XOpenDisplay(name);
+            var connection = Open(name, authority.Cookie);
             if (connection != 0)
             {
                 return connection;
@@ -320,6 +337,60 @@ internal sealed class X11Session(X11Display display, OwnedProcess process, Sessi
     }
 
     private sealed record Box(nuint Frame);
+}
+
+/// <summary>
+/// A random MIT-MAGIC-COOKIE-1 in an Xauthority file. The folder is created for this user only and the file with mode
+/// 0600, so no other local user can connect to the display, read its screen or send it input.
+/// </summary>
+[SupportedOSPlatform("linux")]
+internal sealed record X11Authority(string Directory, string File, byte[] Cookie)
+{
+    private const ushort AnyHost = 0xFFFF;
+
+    internal static X11Authority Create(int display)
+    {
+        var directory = Path.Combine("/tmp", "imprint-x11-" + Guid.NewGuid().ToString("N")[..12]);
+        System.IO.Directory.CreateDirectory(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var cookie = System.Security.Cryptography.RandomNumberGenerator.GetBytes(16);
+        var file = Path.Combine(directory, "Xauthority");
+        var options = new FileStreamOptions
+        {
+            Mode = FileMode.CreateNew,
+            Access = FileAccess.Write,
+            UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite
+        };
+        using (var output = new FileStream(file, options))
+        {
+            // One entry: family, address, display number, protocol name and cookie, each length-prefixed big-endian.
+            Span<byte> family = stackalloc byte[2];
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt16BigEndian(family, AnyHost);
+            output.Write(family);
+            Field(output, []);
+            Field(output, System.Text.Encoding.ASCII.GetBytes(display.ToString(CultureInfo.InvariantCulture)));
+            Field(output, "MIT-MAGIC-COOKIE-1"u8);
+            Field(output, cookie);
+        }
+        return new(directory, file, cookie);
+    }
+
+    internal void Delete()
+    {
+        try
+        {
+            System.IO.Directory.Delete(Directory, recursive: true);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
+    private static void Field(Stream output, ReadOnlySpan<byte> value)
+    {
+        Span<byte> length = stackalloc byte[2];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt16BigEndian(length, (ushort)value.Length);
+        output.Write(length);
+        output.Write(value);
+    }
 }
 
 /// <summary>The environment for a Linux app: fixed scale, the display, then the target's and the source's variables.</summary>

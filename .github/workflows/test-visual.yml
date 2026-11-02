@@ -1,0 +1,147 @@
+name: Test visual
+
+# Screenshot capture against the fixture app, on runners set up with each platform's display server, emulator
+# or simulator. Each job lists its platforms in IMPRINT_VISUAL_PLATFORMS, so a missing prerequisite fails it.
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-visual-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_NOLOGO: true
+  NUGET_XMLDOC_MODE: skip
+  DRIVER_TESTS: FullyQualifiedName~DriverTests
+
+jobs:
+  desktop:
+    name: Visual capture (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            platforms: windows
+          - name: linux
+            os: ubuntu-latest
+            platforms: linux-x11,linux-wayland
+          - name: macos
+            os: macos-latest
+            platforms: macos
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Install display servers
+        if: runner.os == 'Linux'
+        run: >-
+          sudo apt-get update &&
+          sudo apt-get install -y --no-install-recommends xvfb openbox sway grim libgtk-4-1
+      - name: Build
+        run: dotnet build tests/TheLithium.Imprint.Visual.Tests -c Release
+      - name: Capture the fixture
+        env:
+          IMPRINT_VISUAL_PLATFORMS: ${{ matrix.platforms }}
+        run: >-
+          dotnet test tests/TheLithium.Imprint.Visual.Tests -c Release --no-build
+          --filter "${{ env.DRIVER_TESTS }}"
+          --logger trx --logger "console;verbosity=normal"
+          --results-directory artifacts/visual-results
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: visual-${{ matrix.name }}
+          path: artifacts/visual-results
+
+  android:
+    name: Visual capture (android)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Build the fixture APK
+        run: bash tests/TheLithium.Imprint.Visual.Fixture/Android/build.sh artifacts/fixture/fixture.apk
+      - name: Build
+        run: dotnet build tests/TheLithium.Imprint.Visual.Tests -c Release
+      - name: Capture the fixture on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          IMPRINT_VISUAL_PLATFORMS: android
+          IMPRINT_VISUAL_APK: ${{ github.workspace }}/artifacts/fixture/fixture.apk
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: dotnet test tests/TheLithium.Imprint.Visual.Tests -c Release --no-build --filter "${{ env.DRIVER_TESTS }}" --logger trx --logger "console;verbosity=normal" --results-directory artifacts/visual-results
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: visual-android
+          path: artifacts/visual-results
+
+  ios:
+    name: Visual capture (ios)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Build the fixture app
+        run: bash tests/TheLithium.Imprint.Visual.Fixture/Ios/build.sh "$RUNNER_TEMP/Fixture.app"
+      - name: Boot one simulator
+        run: |
+          udid=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          print(next(device["udid"] for runtime, entries in sorted(devices.items(), reverse=True) if "iOS" in runtime
+                     for device in entries if device["name"].startswith("iPhone")))')
+          echo "Booting $udid"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+      - name: Build
+        run: dotnet build tests/TheLithium.Imprint.Visual.Tests -c Release
+      - name: Capture the fixture on the simulator
+        env:
+          IMPRINT_VISUAL_PLATFORMS: ios
+          IMPRINT_VISUAL_IOS_APP: ${{ runner.temp }}/Fixture.app
+        run: >-
+          dotnet test tests/TheLithium.Imprint.Visual.Tests -c Release --no-build
+          --filter "${{ env.DRIVER_TESTS }}"
+          --logger trx --logger "console;verbosity=normal"
+          --results-directory artifacts/visual-results
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: visual-ios
+          path: artifacts/visual-results

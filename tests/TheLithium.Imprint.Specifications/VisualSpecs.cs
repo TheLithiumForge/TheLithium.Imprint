@@ -10,7 +10,8 @@ public static partial class Specs
     [
         (nameof(PngRoundTripsUnderTheCurrentRuntime), Check.Sync(PngRoundTripsUnderTheCurrentRuntime)),
         (nameof(ImageAssertionsCreateMatchAndExplainADifference), Check.Sync(ImageAssertionsCreateMatchAndExplainADifference)),
-        (nameof(AntialiasedEdgesAreIgnoredOnlyWhenAsked), Check.Sync(AntialiasedEdgesAreIgnoredOnlyWhenAsked))
+        (nameof(AntialiasedEdgesAreIgnoredOnlyWhenAsked), Check.Sync(AntialiasedEdgesAreIgnoredOnlyWhenAsked)),
+        (nameof(EveryPlatformChecksItsPrerequisites), EveryPlatformChecksItsPrerequisites)
     ];
 
     private static void PngRoundTripsUnderTheCurrentRuntime()
@@ -57,6 +58,26 @@ public static partial class Specs
         Check.True(!DefaultImageComparer.Instance.Compare(expected, received, ResolvedImageComparison.Defaults).Equal);
         var tolerant = ResolvedImageComparison.Defaults.Apply(new() { IgnoreAntialiasing = true });
         Check.True(DefaultImageComparer.Instance.Compare(expected, received, tolerant).Equal);
+    }
+
+    /// <summary>Reaches every driver, so the Native AOT build compiles all of their native calls.</summary>
+    private static async Task EveryPlatformChecksItsPrerequisites()
+    {
+        using var none = new EnvironmentValue("IMPRINT_VISUAL_PLATFORMS", "none");
+        AppTarget[] targets =
+        [
+            new WindowsApp("missing.exe"), new LinuxApp("missing"), new LinuxApp("missing") { Display = LinuxDisplay.Wayland },
+            new MacApp("missing.app"), new AndroidApp("missing.package"), new IosSimulatorApp("missing.bundle")
+        ];
+        foreach (var target in targets)
+        {
+            var check = await VisualApp.CheckAsync(target);
+            Check.Equal(VisualCheckStatus.NotRequested, check.Status);
+        }
+
+        using var all = new EnvironmentValue("IMPRINT_VISUAL_PLATFORMS", null);
+        var host = await VisualApp.CheckAsync(OperatingSystem.IsWindows() ? new WindowsApp("missing.exe") : new LinuxApp("missing"));
+        Check.True(host.Problem is not null, "A missing app should report a problem.");
     }
 
     private static RgbaImage Filled(int width, int height, Rgba32 color)

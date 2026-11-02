@@ -71,6 +71,36 @@ internal static unsafe partial class X11Native
     internal static partial nint XOpenDisplay(string? name);
 
     [LibraryImport(Library)]
+    private static partial void XSetAuthorization(byte* name, int nameLength, byte* data, int dataLength);
+
+    private static readonly Lock Authorization = new();
+
+    /// <summary>
+    /// Opens a connection with this cookie. Xlib keeps the authorization for the whole process, so setting it and
+    /// connecting happen under one lock, and it's cleared again afterwards.
+    /// </summary>
+    internal static nint Open(string name, ReadOnlySpan<byte> cookie)
+    {
+        ReadOnlySpan<byte> protocol = "MIT-MAGIC-COOKIE-1"u8;
+        lock (Authorization)
+        {
+            fixed (byte* method = protocol)
+            fixed (byte* data = cookie)
+            {
+                XSetAuthorization(method, protocol.Length, data, cookie.Length);
+                try
+                {
+                    return XOpenDisplay(name);
+                }
+                finally
+                {
+                    XSetAuthorization(null, 0, null, 0);
+                }
+            }
+        }
+    }
+
+    [LibraryImport(Library)]
     internal static partial int XCloseDisplay(nint display);
 
     [LibraryImport(Library)]
