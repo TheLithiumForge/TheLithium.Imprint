@@ -10,8 +10,11 @@ using Xunit;
 
 namespace TheLithium.Imprint.Tests;
 
-public sealed class BinarySnapshotTests
+public sealed class BinarySnapshotTests : IDisposable
 {
+    // CI forces a run-wide verify, which would stop these tests from creating baselines.
+    private readonly EnvironmentValue _ci = new("CI", "false");
+    private readonly EnvironmentValue _update = new("IMPRINT_UPDATE", null);
     private const string TextJournal = "TheLithium.Imprint/1\n";
     private const string BinaryJournal = "TheLithium.Imprint/2\n";
     private static readonly byte[] First = [0x89, 0x50, 0x4E, 0x47, 1, 2, 3];
@@ -218,6 +221,12 @@ public sealed class BinarySnapshotTests
         fixture.Run(() => Capture("screen", First, new CountingComparer(Outcome.Different)));
         Assert.Equal(First, File.ReadAllBytes(fixture.FilePath("screen.png")));
         Assert.False(Directory.Exists(journal));
+    }
+
+    public void Dispose()
+    {
+        _update.Dispose();
+        _ci.Dispose();
     }
 
     private static void Capture(string name, byte[] content, IBinarySnapshotComparer comparer)

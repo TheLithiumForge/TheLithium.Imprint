@@ -6,10 +6,12 @@ using TheLithium.Imprint.Visual.Sources;
 using TheLithium.Imprint.Visual.Tools;
 using Xunit;
 
+// Tests here set environment variables and drive the desktop, so they don't run alongside each other.
+[assembly: CollectionBehavior(DisableTestParallelization = true)]
+
 namespace TheLithium.Imprint.Visual.Tests;
 
 /// <summary>The parts of capture that don't need a window: quoting, process trees, stability and platform selection.</summary>
-[Collection(nameof(EnvironmentCollection))]
 public sealed class CaptureLogicTests
 {
     [Theory]
@@ -155,7 +157,3 @@ public sealed class CaptureLogicTests
         public Task<IPlatformSession> AttachAsync(int processId, SessionSettings settings, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 }
-
-/// <summary>Tests that set environment variables don't run alongside each other.</summary>
-[CollectionDefinition(nameof(EnvironmentCollection), DisableParallelization = true)]
-public sealed class EnvironmentCollection;

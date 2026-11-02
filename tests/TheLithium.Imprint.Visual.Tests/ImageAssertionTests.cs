@@ -4,8 +4,11 @@ using Xunit;
 namespace TheLithium.Imprint.Visual.Tests;
 
 /// <summary>AssertImage through explicit fixture lifetimes, so each case controls the update policy and project file.</summary>
-public sealed class ImageAssertionTests
+public sealed class ImageAssertionTests : IDisposable
 {
+    // CI forces a run-wide verify, which would stop these tests from creating baselines.
+    private readonly EnvironmentValue _ci = new("CI", "false");
+    private readonly EnvironmentValue _update = new("IMPRINT_UPDATE", null);
     private static readonly Rgba32 White = Rgba32.Opaque(255, 255, 255);
     private static readonly Rgba32 Black = Rgba32.Opaque(0, 0, 0);
 
@@ -132,6 +135,12 @@ public sealed class ImageAssertionTests
         Assert.StartsWith("The stored PNG can't be read", Assert.Single(failure.Report.Entries).Difference, StringComparison.Ordinal);
         fixture.Run(() => screen.AssertImage("screen"), SnapshotUpdate.All);
         Assert.True(RgbaImage.FromPng(File.ReadAllBytes(fixture.FilePath("screen.png"))).PixelsEqual(screen));
+    }
+
+    public void Dispose()
+    {
+        _update.Dispose();
+        _ci.Dispose();
     }
 
     private sealed class RecordingComparer : IImageComparer
