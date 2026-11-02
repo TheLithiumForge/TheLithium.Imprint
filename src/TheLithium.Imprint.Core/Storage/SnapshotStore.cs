@@ -55,7 +55,7 @@ internal sealed class SnapshotStore
         }
     }
 
-    internal void Commit(BaselineState expected, Dictionary<string, string> desired)
+    internal void Commit(BaselineState expected, Dictionary<string, SnapshotFile> desired)
     {
         _settings.Cancellation.ThrowIfCancellationRequested();
         if (_settings.ReadOnly)
@@ -77,7 +77,7 @@ internal sealed class SnapshotStore
         {
             foreach (var file in current.Files)
             {
-                DurableWrite(Path.Combine(_journal, "before", file.Key), file.Value);
+                DurableWrite(Path.Combine(_journal, "before", file.Key), file.Value.Content);
             }
 
             foreach (var file in desired)
@@ -86,11 +86,12 @@ internal sealed class SnapshotStore
             }
             DurableWrite(Path.Combine(_journal, "before.fingerprint"), current.Fingerprint);
             _settings.Cancellation.ThrowIfCancellationRequested();
+            var marker = JournalMarkerFor(current.Files, desired);
             // No baseline mutation is allowed before this marker has been flushed.
-            DurableWrite(Path.Combine(_journal, "prepared"), SnapshotProtocol.JournalMarker);
+            DurableWrite(Path.Combine(_journal, "prepared"), marker);
             // Do not interrupt this small commit section with cancellation. Finish or roll back.
             Apply(desired);
-            DurableWrite(Path.Combine(_journal, "committed"), SnapshotProtocol.JournalMarker);
+            DurableWrite(Path.Combine(_journal, "committed"), marker);
         }
         catch (Exception error)
         {
@@ -121,20 +122,21 @@ internal sealed class SnapshotStore
         return new(files, Fingerprint(files));
     }
 
-    private static string Fingerprint(Dictionary<string, string> files)
+    internal static string Fingerprint(Dictionary<string, SnapshotFile> files)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         foreach (var file in files.OrderBy(x => x.Key, StringComparer.Ordinal))
         {
-            Append(hash, file.Key);
-            Append(hash, file.Value);
+            Append(hash, SnapshotEncoding.Utf8.GetBytes(file.Key));
+            // Text content is its strict UTF-8 bytes, so text-only fingerprints match earlier versions.
+            Append(hash, file.Value.Content);
         }
         return Convert.ToHexString(hash.GetHashAndReset());
     }
 
-    private Dictionary<string, string> ReadFiles(string directory)
+    private Dictionary<string, SnapshotFile> ReadFiles(string directory)
     {
-        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        var result = new Dictionary<string, SnapshotFile>(StringComparer.Ordinal);
         if (!Directory.Exists(directory))
         {
             return result;
@@ -162,9 +164,9 @@ internal sealed class SnapshotStore
             }
 
             SnapshotPaths.CheckLink(path);
-            var value = SnapshotFileReader.ReadText(path, _settings.MaxBytesPerSnapshot);
-            total += SnapshotEncoding.Utf8.GetByteCount(value);
-            if (total > Math.Max(_settings.MaxBytesPerSnapshot, SnapshotLimits.TestBytes))
+            var value = SnapshotFile.Read(name, SnapshotFileReader.ReadBytes(path, _settings.MaxBytesFor(name)));
+            total += value.Content.Length;
+            if (total > _settings.TestBudget)
             {
                 throw new SnapshotException("The total baseline size for this test exceeds its safety budget.");
             }
@@ -189,7 +191,7 @@ internal sealed class SnapshotStore
 
         if (File.Exists(Path.Combine(_journal, "committed")))
         {
-            if (SnapshotFileReader.ReadText(Path.Combine(_journal, "committed"), SnapshotLimits.JournalMarkerBytes) != SnapshotProtocol.JournalMarker)
+            if (!IsJournalMarker(SnapshotFileReader.ReadText(Path.Combine(_journal, "committed"), SnapshotLimits.JournalMarkerBytes)))
             {
                 throw new SnapshotConflictException($"Unrecognized snapshot journal version: {_journal}");
             }
@@ -209,7 +211,7 @@ internal sealed class SnapshotStore
                 throw new SnapshotConflictException($"An interrupted snapshot update needs recovery. Run locally with writes enabled before verification: {_journal}");
             }
 
-            if (SnapshotFileReader.ReadText(Path.Combine(_journal, "prepared"), SnapshotLimits.JournalMarkerBytes) != SnapshotProtocol.JournalMarker
+            if (!IsJournalMarker(SnapshotFileReader.ReadText(Path.Combine(_journal, "prepared"), SnapshotLimits.JournalMarkerBytes))
                 || !Directory.Exists(Path.Combine(_journal, "before"))
                 || !File.Exists(Path.Combine(_journal, "before.fingerprint")))
             {
@@ -231,7 +233,14 @@ internal sealed class SnapshotStore
         }
     }
 
-    private void Apply(Dictionary<string, string> files)
+    /// <summary>The binary marker whenever the backup or the new set holds a binary snapshot.</summary>
+    internal static string JournalMarkerFor(Dictionary<string, SnapshotFile> before, Dictionary<string, SnapshotFile> desired)
+        => before.Values.Concat(desired.Values).Any(file => !file.IsText) ? SnapshotProtocol.BinaryJournalMarker : SnapshotProtocol.JournalMarker;
+
+    private static bool IsJournalMarker(string marker)
+        => marker is SnapshotProtocol.JournalMarker or SnapshotProtocol.BinaryJournalMarker;
+
+    private void Apply(Dictionary<string, SnapshotFile> files)
     {
         EnsureSafeDirectory(_settings.TestDirectory);
         // Remove old names first so case-only renames are portable on case-insensitive systems.
@@ -252,7 +261,7 @@ internal sealed class SnapshotStore
         foreach (var file in files.OrderBy(x => x.Key, StringComparer.Ordinal))
         {
             ValidateFileName(file.Key);
-            AtomicWrite(Path.Combine(_settings.TestDirectory, file.Key), file.Value);
+            AtomicWrite(Path.Combine(_settings.TestDirectory, file.Key), file.Value.Content);
         }
     }
 
@@ -303,7 +312,7 @@ internal sealed class SnapshotStore
         }
     }
 
-    private static void AtomicWrite(string path, string text)
+    private static void AtomicWrite(string path, byte[] content)
     {
         SnapshotPaths.CheckLink(path);
         var directory = Path.GetDirectoryName(path)
@@ -311,7 +320,7 @@ internal sealed class SnapshotStore
         var temporary = Path.Combine(directory, $".imprint-tmp-{Guid.NewGuid():N}");
         try
         {
-            DurableWrite(temporary, text);
+            DurableWrite(temporary, content);
             File.Move(temporary, path, overwrite: true);
         }
         finally
@@ -323,17 +332,18 @@ internal sealed class SnapshotStore
         }
     }
 
-    private static void DurableWrite(string path, string text)
+    private static void DurableWrite(string path, string text) => DurableWrite(path, SnapshotEncoding.Utf8.GetBytes(text));
+
+    private static void DurableWrite(string path, byte[] content)
     {
         SnapshotPaths.CheckLink(path);
         using var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
-        file.Write(SnapshotEncoding.Utf8.GetBytes(text));
+        file.Write(content);
         file.Flush(flushToDisk: true);
     }
 
-    private static void Append(IncrementalHash hash, string value)
+    private static void Append(IncrementalHash hash, byte[] bytes)
     {
-        var bytes = SnapshotEncoding.Utf8.GetBytes(value);
         Span<byte> length = stackalloc byte[8];
         BinaryPrimitives.WriteInt64LittleEndian(length, bytes.LongLength);
         hash.AppendData(length);

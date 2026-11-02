@@ -176,6 +176,141 @@
           "default": 10
         }
       }
+    },
+    "visual": {
+      "description": "Image and screenshot snapshots from TheLithium.Imprint.Visual and TheLithium.Imprint.Visual.Capture.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "captureSource": {
+          "description": "How screenshots are taken. external: the test process captures through the OS's own tools and calls.",
+          "enum": [
+            "external"
+          ],
+          "default": "external"
+        },
+        "maxBytesPerImage": {
+          "description": "Largest single PNG snapshot file, in bytes.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 268435456,
+          "default": 33554432
+        },
+        "maxPixelsPerImage": {
+          "description": "Largest image, in pixels, that is decoded or captured. Bounds memory before anything is allocated.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 268435456,
+          "default": 8388608
+        },
+        "comparison": {
+          "description": "When two images count as equal. Leave a field out to inherit it.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "channelTolerance": {
+              "description": "Largest difference in any of R, G, B and A, out of 255, for a pixel to count as equal. 0 means exact.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "default": 0
+            },
+            "maxDifferingPercent": {
+              "description": "Share of compared pixels that can differ beyond channelTolerance.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100,
+              "default": 0
+            },
+            "ignoreAntialiasing": {
+              "description": "Ignore differing pixels that look like anti-aliased edges in either image.",
+              "type": "boolean",
+              "default": false
+            }
+          }
+        },
+        "stability": {
+          "description": "How long a capture waits for the window to stop changing.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "matchingFrames": {
+              "description": "Identical frames in a row that end the wait.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 3
+            },
+            "intervalMilliseconds": {
+              "description": "Time between the starts of two captures.",
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 10000,
+              "default": 100
+            },
+            "minimumDurationMilliseconds": {
+              "description": "How long the frames have to stay identical.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 60000,
+              "default": 500
+            },
+            "timeoutSeconds": {
+              "description": "Longest wait before the capture fails.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 600,
+              "default": 10
+            }
+          }
+        },
+        "platforms": {
+          "description": "Comparison for screenshots from one platform. It applies over visual.comparison.",
+          "type": "object",
+          "propertyNames": {
+            "enum": [
+              "windows",
+              "linux-x11",
+              "linux-wayland",
+              "macos",
+              "android",
+              "ios"
+            ]
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "comparison": {
+          "description": "When two images count as equal. Leave a field out to inherit it.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "channelTolerance": {
+              "description": "Largest difference in any of R, G, B and A, out of 255, for a pixel to count as equal. 0 means exact.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255,
+              "default": 0
+            },
+            "maxDifferingPercent": {
+              "description": "Share of compared pixels that can differ beyond channelTolerance.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100,
+              "default": 0
+            },
+            "ignoreAntialiasing": {
+              "description": "Ignore differing pixels that look like anti-aliased edges in either image.",
+              "type": "boolean",
+              "default": false
+            }
+          }
+        }
+            }
+          }
+        }
+      }
     }
   }
 }

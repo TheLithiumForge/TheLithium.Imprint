@@ -76,6 +76,22 @@ internal sealed record EffectiveSettings
     {
         get; init;
     }
+    /// <summary>The per-file limit for binary snapshots such as PNG, from <c>visual.maxBytesPerImage</c>.</summary>
+    public required int MaxBytesPerImage
+    {
+        get; init;
+    }
+    /// <summary>The project's <c>visual</c> group, for the visual packages.</summary>
+    public required VisualSettings Visual
+    {
+        get; init;
+    }
+
+    /// <summary>The combined byte budget of every snapshot in one test, read or captured.</summary>
+    internal long TestBudget => Math.Max(Math.Max(MaxBytesPerSnapshot, MaxBytesPerImage), SnapshotLimits.TestBytes);
+
+    /// <summary>The per-file limit for a stored snapshot of this file name.</summary>
+    internal int MaxBytesFor(string fileName) => SnapshotFileNames.IsBinary(fileName) ? MaxBytesPerImage : MaxBytesPerSnapshot;
     public required TimeSpan LockTimeout
     {
         get; init;

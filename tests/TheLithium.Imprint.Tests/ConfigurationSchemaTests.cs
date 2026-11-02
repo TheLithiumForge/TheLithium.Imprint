@@ -61,19 +61,20 @@ public sealed class ConfigurationSchemaTests : IDisposable
     {
         using var schema = Schema();
         var keys = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var property in schema.RootElement.GetProperty("properties").EnumerateObject())
+        Collect(schema.RootElement.GetProperty("properties"), string.Empty);
+        return keys;
+
+        void Collect(JsonElement properties, string prefix)
         {
-            keys.Add(property.Name);
-            if (property.Value.TryGetProperty("properties", out var children))
+            foreach (var property in properties.EnumerateObject())
             {
-                foreach (var child in children.EnumerateObject())
+                keys.Add(prefix + property.Name);
+                if (property.Value.TryGetProperty("properties", out var children))
                 {
-                    keys.Add(property.Name + "." + child.Name);
+                    Collect(children, prefix + property.Name + ".");
                 }
             }
         }
-
-        return keys;
     }
 
     [Fact]
@@ -149,6 +150,12 @@ public sealed class ConfigurationSchemaTests : IDisposable
             return constant.GetRawText();
         }
 
+        if (definition.TryGetProperty("properties", out var children))
+        {
+            // A nested group gets a sample of every key it allows.
+            return "{" + string.Join(",", children.EnumerateObject().Select(child => "\"" + child.Name + "\":" + Sample(child.Value))) + "}";
+        }
+
         var types = definition.GetProperty("type");
         var type = types.ValueKind == JsonValueKind.Array ? types[0].GetString() : types.GetString();
         return type switch
@@ -157,6 +164,7 @@ public sealed class ConfigurationSchemaTests : IDisposable
             "integer" or "number" => definition.TryGetProperty("minimum", out var minimum) ? minimum.GetRawText() : "0",
             "string" when types.ValueKind == JsonValueKind.Array => "null",
             "string" => "\"sample\"",
+            "object" => "{}",
             _ => "null"
         };
     }

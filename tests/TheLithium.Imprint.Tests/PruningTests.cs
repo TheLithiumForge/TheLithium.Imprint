@@ -169,6 +169,19 @@ public sealed class PruningTests : IDisposable
         Assert.Contains("\"kept\"", Report());
     }
 
+    [Fact]
+    public void AStaleScreenshotFolderIsRemovedLikeAJsonOne()
+    {
+        var test = Test("Orders", "Creates");
+        var screenshots = Folder("Orders", "Renamed");
+        Directory.CreateDirectory(screenshots);
+        File.WriteAllBytes(Path.Combine(screenshots, "screen.png"), [0x89, 0x50, 0x4E, 0x47]);
+
+        Run(test);
+
+        Assert.False(Directory.Exists(screenshots));
+    }
+
     [Theory]
     [InlineData("IMPRINT_PRUNE", "report", "prune is set to report")]
     [InlineData("IMPRINT_UPDATE", "verify", "this run only verifies")]

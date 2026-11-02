@@ -22,6 +22,11 @@ internal sealed record ArtifactRequest
     {
         get; init;
     }
+    /// <summary>Comparer-produced files such as a diff image.</summary>
+    public IReadOnlyList<ArtifactFile> Attachments
+    {
+        get; init;
+    } = [];
     public bool Incomplete
     {
         get; init;

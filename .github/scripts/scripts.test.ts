@@ -117,36 +117,41 @@ function withPackages(names: string[], body: (directory: string) => void): void 
   }
 }
 
-test("Core is pushed before the package that depends on it", () => {
+const ALL_PACKAGES = [
+  "TheLithium.Imprint.Visual.Capture.1.0.0.nupkg",
+  "TheLithium.Imprint.Visual.1.0.0.nupkg",
+  "TheLithium.Imprint.1.0.0.nupkg",
+  "TheLithium.Imprint.Core.1.0.0.nupkg",
+];
+
+test("each package is pushed after the package it depends on", () => {
   // Deliberately written in the order a plain glob would produce, which is the wrong one.
-  withPackages(["TheLithium.Imprint.1.0.0.nupkg", "TheLithium.Imprint.Core.1.0.0.nupkg"], (directory) => {
+  withPackages(ALL_PACKAGES, (directory) => {
     const ordered = orderedPackages(directory).map((p) => p.id);
-    assert.deepEqual(ordered, ["TheLithium.Imprint.Core", "TheLithium.Imprint"]);
+    assert.deepEqual(ordered, [
+      "TheLithium.Imprint.Core",
+      "TheLithium.Imprint",
+      "TheLithium.Imprint.Visual",
+      "TheLithium.Imprint.Visual.Capture",
+    ]);
   });
 });
 
 test("a missing package fails the release", () => {
-  withPackages(["TheLithium.Imprint.1.0.0.nupkg"], (directory) => {
+  withPackages(ALL_PACKAGES.filter((name) => !name.startsWith("TheLithium.Imprint.Core.")), (directory) => {
     assert.throws(() => orderedPackages(directory), /Missing package 'TheLithium.Imprint.Core'/);
   });
 });
 
 test("an unexpected package fails the release", () => {
-  withPackages(
-    ["TheLithium.Imprint.1.0.0.nupkg", "TheLithium.Imprint.Core.1.0.0.nupkg", "Something.Else.1.0.0.nupkg"],
-    (directory) => {
-      assert.throws(() => orderedPackages(directory), /Unexpected package/);
-    },
-  );
+  withPackages([...ALL_PACKAGES, "Something.Else.1.0.0.nupkg"], (directory) => {
+    assert.throws(() => orderedPackages(directory), /Unexpected package/);
+  });
 });
 
 test("two versions of one package fail the release", () => {
   withPackages(
-    [
-      "TheLithium.Imprint.Core.1.0.0.nupkg",
-      "TheLithium.Imprint.1.0.0.nupkg",
-      "TheLithium.Imprint.1.0.1.nupkg",
-    ],
+    [...ALL_PACKAGES, "TheLithium.Imprint.1.0.1.nupkg"],
     (directory) => {
       assert.throws(() => orderedPackages(directory), /Found 2 copies/);
     },

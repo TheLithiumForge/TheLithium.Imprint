@@ -336,6 +336,62 @@ public sealed class GeneratorTests
         Assert.EndsWith("{ Explicit = true, Conditional = true });", Registration(result, "Tests.Custom()"));
     }
 
+    /// <summary>A library that marks its capture method and type the way TheLithium.Imprint.Visual does, read back through metadata.</summary>
+    private static readonly Lazy<MetadataReference> MarkedLibrary = new(() =>
+    {
+        const string library = """
+            using TheLithium.Imprint.Generation;
+            namespace TheLithium.Imprint
+            {
+                [SnapshotCaptureType("AssertImage")]
+                public sealed class Picture { public int Width { get; set; } }
+                public static class PictureExtensions
+                {
+                    [SnapshotCaptureMethod]
+                    public static void AssertImage(this Picture picture, string? name = null) { }
+                }
+            }
+            """;
+        var compilation = CSharpCompilation.Create("TheLithium.Imprint.Visual", [CSharpSyntaxTree.ParseText(library)], References,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+        using var image = new MemoryStream();
+        var emitted = compilation.Emit(image);
+        Assert.True(emitted.Success, string.Join(Environment.NewLine, emitted.Diagnostics));
+        return MetadataReference.CreateFromImage(image.ToArray());
+    });
+
+    [Fact]
+    public void AMarkedCaptureMethodRegistersItsTest()
+    {
+        var result = Generate("""
+            using TheLithium.Imprint;
+            using TheLithium.Imprint.Generation;
+            public class Tests
+            {
+                [Xunit.Fact]
+                public void Screen() => TestExecution.Run(() => new Picture().AssertImage(), new SnapshotTestOptions(), sourceFile: "Tests.cs", sourceLine: 101);
+            }
+            namespace Xunit { public sealed class FactAttribute : System.Attribute { } }
+            """, MarkedLibrary.Value);
+        Assert.Empty(result.Errors);
+        Assert.EndsWith("null));", Registration(result, "Tests.Screen()"));
+    }
+
+    [Fact]
+    public void AssertSnapshotRejectsATypeWithItsOwnCaptureMethod()
+    {
+        var result = Generate("""
+            using TheLithium.Imprint;
+            public class Tests
+            {
+                public void Screen() => Snapshots.Run(() => new Picture().AssertSnapshot());
+            }
+            """, MarkedLibrary.Value);
+        var error = Assert.Single(result.Diagnostics, diagnostic => diagnostic.Id == "IMP002");
+        Assert.Equal(DiagnosticSeverity.Error, error.Severity);
+        Assert.Contains("Call AssertImage instead.", error.GetMessage(), StringComparison.Ordinal);
+    }
+
     /// <summary>The last line of one method's registration, where the pruning facts are written.</summary>
     private static string Registration(GenerationResult result, string method)
     {
@@ -344,7 +400,7 @@ public sealed class GeneratorTests
         return chunk.Split('\n').Select(line => line.Trim()).Last(line => line.EndsWith(");", StringComparison.Ordinal));
     }
 
-    private static GenerationResult Generate(string source)
+    private static GenerationResult Generate(string source, params MetadataReference[] extra)
     {
         source = """
             using TheLithium.Imprint.Configuration;
@@ -353,7 +409,7 @@ public sealed class GeneratorTests
             """ + "\n" + source;
         var options = new CSharpParseOptions(LanguageVersion.Preview);
         var compilation = CSharpCompilation.Create("Consumer", [CSharpSyntaxTree.ParseText(source, options, "Tests.cs")],
-            References, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+            [.. References, .. extra], new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
         GeneratorDriver driver = CSharpGeneratorDriver.Create([new SnapshotGenerator().AsSourceGenerator()], parseOptions: options);
         driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var diagnostics);
         var result = driver.GetRunResult();

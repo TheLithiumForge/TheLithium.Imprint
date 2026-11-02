@@ -24,7 +24,8 @@ internal sealed partial class ProjectConfigurationJsonContext : JsonSerializerCo
             new JsonStringEnumConverter<SnapshotStringContent>(JsonNamingPolicy.KebabCaseLower, allowIntegerValues: false),
             new JsonStringEnumConverter<SnapshotEnumRepresentation>(JsonNamingPolicy.KebabCaseLower, allowIntegerValues: false),
             new JsonStringEnumConverter<SnapshotByteArrayRepresentation>(JsonNamingPolicy.KebabCaseLower, allowIntegerValues: false),
-            new JsonStringEnumConverter<SnapshotDictionaryRepresentation>(JsonNamingPolicy.KebabCaseLower, allowIntegerValues: false)
+            new JsonStringEnumConverter<SnapshotDictionaryRepresentation>(JsonNamingPolicy.KebabCaseLower, allowIntegerValues: false),
+            new JsonStringEnumConverter<VisualCaptureSource>(JsonNamingPolicy.KebabCaseLower, allowIntegerValues: false)
         }
     });
 }

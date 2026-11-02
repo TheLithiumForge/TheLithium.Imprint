@@ -19,6 +19,8 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: true
   DOTNET_NOLOGO: true
   NUGET_XMLDOC_MODE: skip
+  # Screenshot capture runs in test-visual.yml, on runners set up for it.
+  IMPRINT_VISUAL_PLATFORMS: none
 
 jobs:
   prepare:

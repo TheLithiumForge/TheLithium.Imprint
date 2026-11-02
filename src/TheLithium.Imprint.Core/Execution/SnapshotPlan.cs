@@ -7,9 +7,24 @@ internal sealed class SnapshotPlan(BaselineState baseline, IReadOnlyList<Snapsho
     internal bool Changes => decisions.Any(decision => decision.Changes);
     internal SnapshotEntryResult[] Entries(bool approved) => decisions.Select(decision => decision.ReportEntry(approved)).ToArray();
 
-    internal Dictionary<string, string> DesiredFiles()
+    /// <summary>Comparer-produced files, named after the capture they explain, e.g. <c>settings.diff.png</c>.</summary>
+    internal IEnumerable<ArtifactFile> Attachments()
     {
-        var files = new Dictionary<string, string>(baseline.Files, StringComparer.Ordinal);
+        foreach (var decision in decisions)
+        {
+            if (decision.Capture is { } capture)
+            {
+                foreach (var attachment in decision.Attachments)
+                {
+                    yield return new($"{Path.GetFileNameWithoutExtension(capture.FileName)}.{attachment.Suffix}", attachment.Content);
+                }
+            }
+        }
+    }
+
+    internal Dictionary<string, SnapshotFile> DesiredFiles()
+    {
+        var files = new Dictionary<string, SnapshotFile>(baseline.Files, StringComparer.Ordinal);
         foreach (var decision in decisions.Where(decision => decision.Changes))
         {
             if (decision.ExistingFile is { } existing)
@@ -18,7 +33,7 @@ internal sealed class SnapshotPlan(BaselineState baseline, IReadOnlyList<Snapsho
             }
             if (decision.Capture is { } capture)
             {
-                files[capture.FileName] = capture.Text;
+                files[capture.FileName] = capture.Content;
             }
         }
         return files;
@@ -47,23 +62,18 @@ internal sealed class SnapshotPlan(BaselineState baseline, IReadOnlyList<Snapsho
             }
             var existing = candidates[0];
             used.Add(existing);
-            SnapshotComparisonResult comparison;
-            if (existing != value.FileName)
-            {
-                comparison = new(false, "Snapshot name or file format changed.");
-            }
-            else
-            {
-                comparison = value.Comparer is null
-                    ? DefaultSnapshotComparer.Instance.Compare(baseline.Files[existing], value.Text, value.Format, value.Comparison, settings.Cancellation)
-                    : value.Comparer.Compare(baseline.Files[existing], value.Text, value.Format, value.Comparison);
-                settings.Cancellation.ThrowIfCancellationRequested();
-            }
+            var stored = baseline.Files[existing];
+            var comparison = existing == value.FileName
+                ? Compare(settings, stored, value)
+                : new BinaryComparisonResult(false, "Snapshot name or file format changed.", []);
+            settings.Cancellation.ThrowIfCancellationRequested();
             var entry = new SnapshotEntryResult(value.Name, value.FileName,
                 comparison.Equal ? SnapshotStatus.Matched : SnapshotStatus.Changed, comparison.Difference);
-            var writes = policy == SnapshotUpdate.All && (existing != value.FileName || baseline.Files[existing] != value.Text);
-            decisions.Add(new(entry, writes ? SnapshotStatus.Updated : entry.Status,
-                comparison.Equal || policy == SnapshotUpdate.All, Capture: value, ExistingFile: existing));
+            decisions.Add(new(entry, Writes(policy, existing, stored, value, comparison) ? SnapshotStatus.Updated : entry.Status,
+                comparison.Equal || policy == SnapshotUpdate.All, Capture: value, ExistingFile: existing)
+            {
+                Attachments = comparison.Attachments
+            });
         }
         var testPolicy = settings.ResolveUpdate(SnapshotUpdate.Inherit, update);
         foreach (var existing in baseline.Files.Keys.Where(name => !used.Contains(name)).Order(StringComparer.Ordinal))
@@ -74,5 +84,39 @@ internal sealed class SnapshotPlan(BaselineState baseline, IReadOnlyList<Snapsho
                 SnapshotStatus.Removed, testPolicy == SnapshotUpdate.All, ExistingFile: existing));
         }
         return new(baseline, decisions);
+    }
+
+    private static BinaryComparisonResult Compare(EffectiveSettings settings, SnapshotFile stored, CapturedValue value)
+    {
+        if (value.BinaryComparer is { } binary)
+        {
+            return stored.SameContent(value.Content)
+                ? BinaryComparisonResult.Same
+                : binary.Compare(stored.Content, value.Content.Content, settings.Cancellation);
+        }
+
+        var text = value.Comparer is null
+            ? DefaultSnapshotComparer.Instance.Compare(stored.Text, value.Content.Text, value.Format, value.Comparison, settings.Cancellation)
+            : value.Comparer.Compare(stored.Text, value.Content.Text, value.Format, value.Comparison);
+        return new(text.Equal, text.Difference, []);
+    }
+
+    /// <summary>
+    /// Under All, a capture is written whenever its content differs, as text always was. A binary snapshot whose decoded
+    /// content is identical, e.g. the same pixels compressed by another zlib, keeps the stored file, so it never churns.
+    /// </summary>
+    private static bool Writes(SnapshotUpdate policy, string existing, SnapshotFile stored, CapturedValue value, BinaryComparisonResult comparison)
+    {
+        if (policy != SnapshotUpdate.All)
+        {
+            return false;
+        }
+
+        if (existing != value.FileName)
+        {
+            return true;
+        }
+
+        return value.BinaryComparer is null ? !stored.SameContent(value.Content) : !comparison.Identical;
     }
 }

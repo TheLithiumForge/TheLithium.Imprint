@@ -25,6 +25,7 @@ internal sealed class ProjectConfigurationFile
     public ComparisonConfiguration Comparison { get; set; } = new();
     public RepresentationConfiguration Representation { get; set; } = new();
     public LimitsConfiguration Limits { get; set; } = new();
+    public VisualFileConfiguration Visual { get; set; } = new();
 }
 
 internal sealed class FileConfiguration

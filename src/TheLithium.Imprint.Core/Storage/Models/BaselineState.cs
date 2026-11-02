@@ -1,3 +1,3 @@
 namespace TheLithium.Imprint.Storage.Models;
 
-internal sealed record BaselineState(Dictionary<string, string> Files, string Fingerprint);
+internal sealed record BaselineState(Dictionary<string, SnapshotFile> Files, string Fingerprint);

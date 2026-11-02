@@ -9,7 +9,7 @@ namespace TheLithium.Imprint.Specifications;
 
 public static partial class Specs
 {
-    public static (string Name, Func<Task> Run)[] All => [.. Original, .. Additional, .. Security, .. JsonBoundaries, .. Representations, .. Transactions];
+    public static (string Name, Func<Task> Run)[] All => [.. Original, .. Additional, .. Security, .. JsonBoundaries, .. Representations, .. Transactions, .. Visual];
 
     private static (string Name, Func<Task> Run)[] Original => new (string, Func<Task>)[]
     {

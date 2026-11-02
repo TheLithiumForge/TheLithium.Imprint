@@ -1,10 +1,10 @@
 /**
  * Shared knowledge about the packages this repository ships.
  *
- * TheLithium.Imprint declares a hard dependency on TheLithium.Imprint.Core and carries no
- * runtime assembly of its own, so Core must reach nuget.org first. Indexing is asynchronous:
- * if the dependent package is indexed while its dependency is not, installs fail during that
- * window. Ordering here closes it.
+ * Each package depends on the one before it: TheLithium.Imprint on Core, Visual on
+ * TheLithium.Imprint, and Visual.Capture on Visual. A dependency must reach nuget.org first.
+ * Indexing is asynchronous: if a dependent package is indexed while its dependency is not,
+ * installs fail during that window. Ordering here closes it.
  */
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -16,7 +16,12 @@ export type PackageFile = {
 };
 
 /** Dependencies first. Each entry is matched against the package file name. */
-export const PUBLISH_ORDER: readonly string[] = ["TheLithium.Imprint.Core", "TheLithium.Imprint"];
+export const PUBLISH_ORDER: readonly string[] = [
+  "TheLithium.Imprint.Core",
+  "TheLithium.Imprint",
+  "TheLithium.Imprint.Visual",
+  "TheLithium.Imprint.Visual.Capture",
+];
 
 export const PACKAGE_DIRECTORY = "artifacts/packages";
 

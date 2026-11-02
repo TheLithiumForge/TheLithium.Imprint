@@ -18,7 +18,7 @@ internal static class SnapshotArtifacts
         {
             var extension = Path.GetExtension(value.FileName);
             var name = Path.GetFileNameWithoutExtension(value.FileName);
-            WriteText(Path.Combine(directory, $"{name}.received{extension}"), value.Text);
+            WriteBytes(directory, $"{name}.received{extension}", value.Content.Content);
         }
         foreach (var entry in request.Entries.Where(x => x.Status is SnapshotStatus.Changed or SnapshotStatus.Unused))
         {
@@ -28,8 +28,12 @@ internal static class SnapshotArtifacts
             {
                 var extension = Path.GetExtension(existing);
                 var name = Path.GetFileNameWithoutExtension(existing);
-                WriteText(Path.Combine(directory, $"{name}.expected{extension}"), expected);
+                WriteBytes(directory, $"{name}.expected{extension}", expected.Content);
             }
+        }
+        foreach (var attachment in request.Attachments)
+        {
+            WriteBytes(directory, attachment.FileName, attachment.Content);
         }
         var reportPath = Path.Combine(directory, "run.json");
         SnapshotPaths.CheckLink(reportPath);
@@ -65,9 +69,15 @@ internal static class SnapshotArtifacts
         return directory;
     }
 
-    private static void WriteText(string path, string text)
+    private static void WriteBytes(string directory, string fileName, byte[] content)
     {
+        if (fileName != Path.GetFileName(fileName) || PortableNames.Segment(fileName) != fileName)
+        {
+            throw new SnapshotException($"Invalid failure artifact name: {fileName}");
+        }
+
+        var path = Path.Combine(directory, fileName);
         SnapshotPaths.CheckLink(path);
-        File.WriteAllText(path, text, SnapshotEncoding.Utf8);
+        File.WriteAllBytes(path, content);
     }
 }
