@@ -4,6 +4,7 @@
     <Project Path="src/TheLithium.Imprint.Core/TheLithium.Imprint.Core.csproj" />
     <Project Path="src/TheLithium.Imprint.Generator/TheLithium.Imprint.Generator.csproj" />
     <Project Path="src/TheLithium.Imprint/TheLithium.Imprint.csproj" />
+    <Project Path="src/TheLithium.Imprint.Visual/TheLithium.Imprint.Visual.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/TheLithium.Imprint.Generator.Tests/TheLithium.Imprint.Generator.Tests.csproj" />
@@ -11,5 +12,6 @@
     <Project Path="tests/TheLithium.Imprint.NUnit.Tests/TheLithium.Imprint.NUnit.Tests.csproj" />
     <Project Path="tests/TheLithium.Imprint.Specifications/TheLithium.Imprint.Specifications.csproj" />
     <Project Path="tests/TheLithium.Imprint.Tests/TheLithium.Imprint.Tests.csproj" />
+    <Project Path="tests/TheLithium.Imprint.Visual.Tests/TheLithium.Imprint.Visual.Tests.csproj" />
   </Folder>
 </Solution>

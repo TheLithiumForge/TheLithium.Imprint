@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Opens explicit fixture lifetimes, so the build task must not wrap these methods too. -->
+    <Compile Update="ImageAssertionTests.cs" ImprintInstrument="false" />
+    <Compile Include="../TheLithium.Imprint.Specifications/TestSupport.cs" Link="Specifications/TestSupport.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UsePackageReferences)' != 'true'">
+    <ProjectReference Include="../../src/TheLithium.Imprint.Visual/TheLithium.Imprint.Visual.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UsePackageReferences)' == 'true'">
+    <PackageReference Include="TheLithium.Imprint.Visual" Version="$(Version)" />
+  </ItemGroup>
+</Project>
