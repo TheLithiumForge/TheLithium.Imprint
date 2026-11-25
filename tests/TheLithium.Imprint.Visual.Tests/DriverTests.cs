@@ -1,3 +1,6 @@
+using TheLithium.Imprint.Visual.Platforms.Android;
+using TheLithium.Imprint.Visual.Platforms.Ios;
+using TheLithium.Imprint.Visual.Tools;
 using Xunit;
 
 namespace TheLithium.Imprint.Visual.Tests;
@@ -37,6 +40,33 @@ public sealed class DriverTests
         var right = image[3 * image.Width / 4, image.Height / 2];
         Assert.True(left is { R: > 150, G: < 110, B: < 110 }, $"Expected the red half, got {left}.");
         Assert.True(right is { G: > 120, R: < 130, B: < 160 }, $"Expected the green half, got {right}.");
+    }
+
+    [Theory]
+    [InlineData(VisualPlatform.Android), InlineData(VisualPlatform.IOS)]
+    public async Task ABackgroundAppCannotSupplyAScreenshot(VisualPlatform platform)
+    {
+        var target = Target(platform);
+        if ((await VisualApp.CheckAsync(target)).Status == VisualCheckStatus.NotRequested)
+        {
+            return;
+        }
+
+        await using var app = await VisualApp.StartAsync(target, new() { StartTimeout = TimeSpan.FromSeconds(90) });
+        var run = ToolRun.Text(TimeSpan.FromSeconds(30));
+        if (platform == VisualPlatform.Android)
+        {
+            await ToolProcess.RunTextAsync(AndroidDriver.Adb()!,
+                ["shell", "am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.HOME"], run, CancellationToken.None);
+        }
+        else
+        {
+            var launch = await IosSimulatorDriver.SimctlAsync(["launch", "booted", "com.apple.Preferences"], run, CancellationToken.None);
+            launch.EnsureSuccess("simctl", ["launch", "booted", "com.apple.Preferences"]);
+        }
+
+        var error = await Assert.ThrowsAsync<SnapshotCaptureException>(() => app.CaptureAsync());
+        Assert.Contains("foreground", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

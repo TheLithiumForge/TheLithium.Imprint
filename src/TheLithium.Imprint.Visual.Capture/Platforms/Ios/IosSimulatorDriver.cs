@@ -1,6 +1,6 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
-using TheLithium.Imprint.Configuration;
 using TheLithium.Imprint.Visual.Sources;
 using TheLithium.Imprint.Visual.Tools;
 
@@ -50,13 +50,19 @@ internal sealed class IosSimulatorDriver : IPlatformDriver
         }
 
         var hold = await MachineLock.AcquireAsync($"ios-{simulator.Udid}", TimeSpan.FromMinutes(5), cancellationToken).ConfigureAwait(false);
-        var session = new IosSession(simulator.Udid, hold, app.BundleId, bootedHere: simulator.State != "Booted");
+        var session = new IosSession(simulator.Udid, hold, app.BundleId);
         try
         {
-            await session.PrepareAsync(app.AppBundle, cancellationToken).ConfigureAwait(false);
+            // The simulator can shut down while this session waits for the previous one to release its lock.
+            var (current, issue) = await SimulatorAsync(simulator.Udid, cancellationToken).ConfigureAwait(false);
+            if (current is null)
+            {
+                throw new SnapshotCaptureException(issue);
+            }
+            await session.PrepareAsync(app.AppBundle, current.State == "Shutdown", cancellationToken).ConfigureAwait(false);
             var environment = app.Environment.Concat(plan.ExtraEnvironment)
                 .ToDictionary(variable => "SIMCTL_CHILD_" + variable.Key, variable => (string?)variable.Value, StringComparer.Ordinal);
-            await session.LaunchAsync([.. app.Arguments, .. plan.ExtraArguments], environment, cancellationToken).ConfigureAwait(false);
+            await session.LaunchAsync([.. app.Arguments, .. plan.ExtraArguments], environment, settings.StartTimeout, cancellationToken).ConfigureAwait(false);
             return session;
         }
         catch
@@ -81,6 +87,10 @@ internal sealed class IosSimulatorDriver : IPlatformDriver
         var simulators = new List<Simulator>();
         foreach (var runtime in document.RootElement.GetProperty("devices").EnumerateObject())
         {
+            if (!runtime.Name.StartsWith("com.apple.CoreSimulator.SimRuntime.iOS-", StringComparison.Ordinal))
+            {
+                continue;
+            }
             foreach (var device in runtime.Value.EnumerateArray())
             {
                 if (device.TryGetProperty("isAvailable", out var available) && available.ValueKind == JsonValueKind.False)
@@ -114,62 +124,120 @@ internal sealed class IosSimulatorDriver : IPlatformDriver
     private sealed record Simulator(string Udid, string Name, string State);
 }
 
-internal sealed class IosSession(string udid, FileStream hold, string bundleId, bool bootedHere) : IPlatformSession
+internal sealed class IosSession(string udid, FileStream hold, string bundleId) : IPlatformSession
 {
     private static readonly ToolRun Short = ToolRun.Text(TimeSpan.FromSeconds(60));
+    private readonly IosForeground _foreground = new(udid, bundleId);
     private bool _statusBar;
     private bool _booted;
+    private Process? _app;
     private int _disposed;
 
-    internal async Task PrepareAsync(string? appBundle, CancellationToken cancellationToken)
+    internal async Task PrepareAsync(string? appBundle, bool bootHere, CancellationToken cancellationToken)
     {
-        if (bootedHere)
+        if (bootHere)
         {
-            (await IosSimulatorDriver.SimctlAsync(["boot", udid], Short, cancellationToken).ConfigureAwait(false)).EnsureSuccess("simctl", ["boot", udid]);
+            cancellationToken.ThrowIfCancellationRequested();
+            (await IosSimulatorDriver.SimctlAsync(["boot", udid], Short, CancellationToken.None).ConfigureAwait(false)).EnsureSuccess("simctl", ["boot", udid]);
             _booted = true;
+            cancellationToken.ThrowIfCancellationRequested();
         }
-        (await IosSimulatorDriver.SimctlAsync(["bootstatus", udid, "-b"], ToolRun.Text(TimeSpan.FromMinutes(5)), cancellationToken).ConfigureAwait(false))
+        (await IosSimulatorDriver.SimctlAsync(["bootstatus", udid], ToolRun.Text(TimeSpan.FromMinutes(5)), cancellationToken).ConfigureAwait(false))
             .EnsureSuccess("simctl", ["bootstatus", udid]);
 
-        (await IosSimulatorDriver.SimctlAsync(["status_bar", udid, "override", "--time", "9:41", "--dataNetwork", "wifi", "--wifiMode", "active", "--wifiBars", "3",
-            "--cellularMode", "active", "--cellularBars", "4", "--batteryState", "charged", "--batteryLevel", "100"], Short, cancellationToken).ConfigureAwait(false))
-            .EnsureSuccess("simctl", ["status_bar", udid, "override"]);
-        _statusBar = true;
+        var status = await IosSimulatorDriver.SimctlAsync(["status_bar", udid, "list"], Short, cancellationToken).ConfigureAwait(false);
+        status.EnsureSuccess("simctl", ["status_bar", udid, "list"]);
+        // A cleared list contains just its heading and underline. Keep any existing or unrecognized overrides.
+        if (status.Text.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries) is
+            ["Current Status Bar Overrides:", var line] && line.Length > 0 && line.All(c => c == '='))
+        {
+            _statusBar = true;
+            (await IosSimulatorDriver.SimctlAsync(["status_bar", udid, "override", "--time", "9:41", "--dataNetwork", "wifi", "--wifiMode", "active", "--wifiBars", "3",
+                "--cellularMode", "active", "--cellularBars", "4", "--batteryState", "charged", "--batteryLevel", "100"], Short, cancellationToken).ConfigureAwait(false))
+                .EnsureSuccess("simctl", ["status_bar", udid, "override"]);
+        }
 
         if (appBundle is not null)
         {
             (await IosSimulatorDriver.SimctlAsync(["install", udid, appBundle], ToolRun.Text(TimeSpan.FromMinutes(3)), cancellationToken).ConfigureAwait(false))
                 .EnsureSuccess("simctl", ["install", udid, appBundle]);
         }
+        await _foreground.StartAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    internal async Task LaunchAsync(IReadOnlyList<string> arguments, IReadOnlyDictionary<string, string?> environment, CancellationToken cancellationToken)
+    internal async Task LaunchAsync(IReadOnlyList<string> arguments, IReadOnlyDictionary<string, string?> environment, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var run = new ToolRun(TimeSpan.FromMinutes(2), 1024 * 1024, environment);
-        var launched = await IosSimulatorDriver.SimctlAsync(["launch", "--terminate-running-process", udid, bundleId, .. arguments], run, cancellationToken).ConfigureAwait(false);
+        // Once simctl submits a launch, obtain its PID before honoring cancellation so cleanup can stop that instance.
+        cancellationToken.ThrowIfCancellationRequested();
+        var launched = await IosSimulatorDriver.SimctlAsync(["launch", "--terminate-running-process", udid, bundleId, .. arguments], run, CancellationToken.None).ConfigureAwait(false);
         launched.EnsureSuccess("simctl", ["launch", udid, bundleId]);
-
-        // simctl prints "bundle: pid". The app has launched, so the next frames are its own.
+        // CoreSimulator apps run as host processes. Keep the specific launch so a restarted bundle can't replace it.
         var pid = launched.Text.Split(':').LastOrDefault()?.Trim();
-        if (!int.TryParse(pid, NumberStyles.None, CultureInfo.InvariantCulture, out _))
+        if (!int.TryParse(pid, NumberStyles.None, CultureInfo.InvariantCulture, out var processId))
         {
-            throw new SnapshotCaptureException($"simctl launch didn't report a process: {launched.Text}");
+            throw new SnapshotCaptureException($"simctl launch didn't report a process for {bundleId}: {launched.Text}");
+        }
+        try
+        {
+            _app = Process.GetProcessById(processId);
+        }
+        catch (ArgumentException)
+        {
+            throw new SnapshotCaptureException($"{bundleId} exited before reaching the foreground.");
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var launch = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        launch.CancelAfter(timeout);
+        try
+        {
+            while (!await _foreground.IsForegroundAsync(launch.Token).ConfigureAwait(false))
+            {
+                EnsureAppRunning();
+                await Task.Delay(100, launch.Token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new SnapshotCaptureException($"{bundleId} didn't reach the foreground within {timeout.TotalSeconds:0.#} seconds.");
         }
     }
 
     public async Task<RgbaImage> CaptureAsync(int maxPixels, CancellationToken cancellationToken)
     {
-        var file = Path.Combine(Path.GetTempPath(), $"imprint-ios-{Guid.NewGuid():N}.png");
+        EnsureAppRunning();
+        await _foreground.RequireForegroundAsync(cancellationToken).ConfigureAwait(false);
+        var file = _foreground.FrameFile;
         try
         {
-            (await IosSimulatorDriver.SimctlAsync(["io", udid, "screenshot", "--type=png", file], Short, cancellationToken).ConfigureAwait(false))
-                .EnsureSuccess("simctl", ["io", udid, "screenshot"]);
+            var frame = await IosSimulatorDriver.SimctlAsync(["io", udid, "screenshot", "--type=png", file], Short, cancellationToken).ConfigureAwait(false);
+            frame.EnsureSuccess("simctl", ["io", udid, "screenshot"]);
+            await _foreground.RequireForegroundAsync(cancellationToken).ConfigureAwait(false);
+            EnsureAppRunning();
             return RgbaImage.FromPng(await File.ReadAllBytesAsync(file, cancellationToken).ConfigureAwait(false), maxPixels);
         }
         finally
         {
             File.Delete(file);
         }
+    }
+
+    private void EnsureAppRunning()
+    {
+        if (_app is null || _app.HasExited)
+        {
+            throw new SnapshotCaptureException($"The launched {bundleId} exited and is no longer the foreground app on {udid}.");
+        }
+    }
+
+    private async Task CleanAsync(IReadOnlyList<string> command)
+    {
+        try
+        {
+            await IosSimulatorDriver.SimctlAsync(command, Short, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (SnapshotCaptureException) { }
     }
 
     public async ValueTask DisposeAsync()
@@ -181,22 +249,30 @@ internal sealed class IosSession(string udid, FileStream hold, string bundleId, 
 
         try
         {
-            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(90));
-            await IosSimulatorDriver.SimctlAsync(["terminate", udid, bundleId], Short, cleanup.Token).ConfigureAwait(false);
-            if (_statusBar)
-            {
-                await IosSimulatorDriver.SimctlAsync(["status_bar", udid, "clear"], Short, cleanup.Token).ConfigureAwait(false);
-            }
-            if (_booted)
-            {
-                await IosSimulatorDriver.SimctlAsync(["shutdown", udid], Short, cleanup.Token).ConfigureAwait(false);
-            }
+            await _foreground.DisposeAsync().ConfigureAwait(false);
         }
-        catch (SnapshotCaptureException) { }
-        catch (OperationCanceledException) { }
         finally
         {
-            await hold.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                if (_app is { HasExited: false })
+                {
+                    await CleanAsync(["terminate", udid, bundleId]).ConfigureAwait(false);
+                }
+                if (_statusBar)
+                {
+                    await CleanAsync(["status_bar", udid, "clear"]).ConfigureAwait(false);
+                }
+                if (_booted)
+                {
+                    await CleanAsync(["shutdown", udid]).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                _app?.Dispose();
+                await hold.DisposeAsync().ConfigureAwait(false);
+            }
         }
     }
 }
