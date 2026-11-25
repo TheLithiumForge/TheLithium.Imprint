@@ -1,5 +1,4 @@
 using System.Globalization;
-using TheLithium.Imprint.Configuration;
 using System.Runtime.Versioning;
 using TheLithium.Imprint.Visual.Sources;
 using TheLithium.Imprint.Visual.Tools;
@@ -99,15 +98,15 @@ internal sealed class MacDriver : IPlatformDriver
     [SupportedOSPlatform("macos")]
     private sealed class MacSession(int processId, OwnedProcess? process, SessionSettings settings) : IPlatformSession
     {
-        private uint _window;
         private int _disposed;
 
-        internal async Task WaitForWindowAsync(CancellationToken cancellationToken)
-            => _window = (await PlatformDrivers.WaitForAsync<MacWindow>(async token =>
+        internal Task<MacWindow> WaitForWindowAsync(CancellationToken cancellationToken)
+            => PlatformDrivers.WaitForAsync<MacWindow>(async token =>
             {
-                var tree = await ProcessTree.OfAsync(processId, token).ConfigureAwait(false);
-                var matching = MacNative.Windows()
-                    .Where(window => tree.Contains(window.ProcessId) && window.Bounds.Width > 1 && window.Bounds.Height > 1)
+                var tree = process is null
+                    ? await ProcessTree.OfAsync(processId, token).ConfigureAwait(false)
+                    : await process.MembersAsync(token).ConfigureAwait(false);
+                var matching = MacNative.Windows(tree)
                     .Where(window => settings.Window?.Matches(window.Title) ?? true).ToList();
                 if (matching.Count == 1)
                 {
@@ -115,24 +114,24 @@ internal sealed class MacDriver : IPlatformDriver
                 }
 
                 var problem = PlatformDrivers.WindowProblem(matching.Select(window => window.Describe()).ToList(), settings.Window, settings.StartTimeout);
+                if (matching.Count > 1)
+                {
+                    throw new SnapshotCaptureException(problem);
+                }
                 if (process?.HasExited == true)
                 {
                     problem += $" The app exited. Its last output:{Environment.NewLine}{process.Tail()}";
                 }
                 return (null, problem);
-            }, settings.StartTimeout, cancellationToken).ConfigureAwait(false)).Number;
+            }, settings.StartTimeout, cancellationToken);
 
         public async Task<RgbaImage> CaptureAsync(int maxPixels, CancellationToken cancellationToken)
         {
-            if (MacNative.Windows().All(window => window.Number != _window))
-            {
-                await WaitForWindowAsync(cancellationToken).ConfigureAwait(false);
-            }
-
+            var window = await WaitForWindowAsync(cancellationToken).ConfigureAwait(false);
             var file = Path.Combine(Path.GetTempPath(), $"imprint-capture-{Guid.NewGuid():N}.png");
             try
             {
-                var id = _window.ToString(CultureInfo.InvariantCulture);
+                var id = window.Number.ToString(CultureInfo.InvariantCulture);
                 await ToolProcess.RunTextAsync(ScreenCapture, ["-x", "-o", "-t", "png", "-l", id, file], ToolRun.Text(TimeSpan.FromSeconds(20)), cancellationToken)
                     .ConfigureAwait(false);
                 if (!File.Exists(file))

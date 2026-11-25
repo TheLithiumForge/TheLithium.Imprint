@@ -40,13 +40,14 @@ internal static class ToolProcess
 
         using var process = Process.Start(start) ?? throw new SnapshotCaptureException($"Couldn't start {file}.");
         process.StandardInput.Close();
-        var output = ReadAsync(process.StandardOutput.BaseStream, run.MaxOutputBytes);
-        var errors = ReadAsync(process.StandardError.BaseStream, ErrorBytes);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(run.Timeout);
+        var output = ReadAsync(process.StandardOutput.BaseStream, run.MaxOutputBytes, timeout.Token);
+        var errors = ReadAsync(process.StandardError.BaseStream, ErrorBytes, timeout.Token);
         try
         {
-            await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+            // A child can keep stdout or stderr open after the tool exits. The deadline also covers both pipes.
+            await Task.WhenAll(output, errors, process.WaitForExitAsync(timeout.Token)).WaitAsync(timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -83,13 +84,13 @@ internal static class ToolProcess
     }
 
     /// <summary>Reads a stream to its end, keeping at most <paramref name="maximum"/> bytes but always draining it.</summary>
-    private static async Task<(byte[] Bytes, bool Overflow)> ReadAsync(Stream stream, int maximum)
+    private static async Task<(byte[] Bytes, bool Overflow)> ReadAsync(Stream stream, int maximum, CancellationToken cancellationToken)
     {
         using var buffer = new MemoryStream();
         var chunk = new byte[16 * 1024];
         var overflow = false;
         int read;
-        while ((read = await stream.ReadAsync(chunk).ConfigureAwait(false)) != 0)
+        while ((read = await stream.ReadAsync(chunk, cancellationToken).ConfigureAwait(false)) != 0)
         {
             if (buffer.Length + read > maximum)
             {

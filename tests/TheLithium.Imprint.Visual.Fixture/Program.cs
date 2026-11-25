@@ -18,11 +18,11 @@ internal static class Program
         var right = Color(Option(args, "--right") ?? "30,60,220");
         if (OperatingSystem.IsWindows())
         {
-            return Win32Window.Run(title, right);
+            return Win32Window.Run(title, right, args.Contains("--topmost", StringComparer.Ordinal));
         }
         if (OperatingSystem.IsLinux())
         {
-            return GtkWindow.Run(title, right);
+            return GtkWindow.Run(title, right, args.Contains("--second-window", StringComparer.Ordinal));
         }
         if (OperatingSystem.IsMacOS())
         {

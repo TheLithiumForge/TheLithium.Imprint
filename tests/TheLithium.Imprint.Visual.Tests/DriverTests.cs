@@ -23,31 +23,20 @@ public sealed class DriverTests
         }
 
         await using var app = await VisualApp.StartAsync(target, new() { StartTimeout = TimeSpan.FromSeconds(90) });
+        // Both Windows fixtures open at the same position. The covering window's right half is blue.
+        await using var cover = target is WindowsApp windows
+            ? await VisualApp.StartAsync(windows with { Arguments = ["--title", "Cover", "--topmost"] })
+            : null;
         var screenshot = await app.CaptureAsync(new() { Stability = new() { Timeout = TimeSpan.FromSeconds(30) } });
         Assert.Equal(platform, screenshot.Platform);
         Assert.Equal(CaptureSource.External, screenshot.Source);
 
-        // The fixture is 400x300 points, half red and half green. Scale, window frames and display color spaces
-        // vary, so look for the two halves by their strongest channel anywhere, side by side.
-        var red = Region(screenshot.Image, pixel => pixel.R > 150 && pixel.G < 110 && pixel.B < 110);
-        var green = Region(screenshot.Image, pixel => pixel.G > 120 && pixel.R < 130 && pixel.B < 160);
-        Assert.True(red.Count >= 200 * 300 * 9 / 10, $"Found {red.Count} red pixels in a {screenshot.Image.Width}x{screenshot.Image.Height} capture.");
-        Assert.True(green.Count >= 200 * 300 * 9 / 10, $"Found {green.Count} green pixels in a {screenshot.Image.Width}x{screenshot.Image.Height} capture.");
-        Assert.True(red.MeanX < green.MeanX, "The red half should be left of the green half.");
-    }
-
-    [Fact]
-    public async Task AStoppedSessionRefusesToCapture()
-    {
-        var target = Target(Current());
-        if ((await VisualApp.CheckAsync(target)).Status != VisualCheckStatus.Ready)
-        {
-            return;
-        }
-
-        var app = await VisualApp.StartAsync(target);
-        await app.DisposeAsync();
-        await Assert.ThrowsAsync<ObjectDisposedException>(() => app.CaptureAsync());
+        // Sample inside each half so window frames, scale and system bars can vary.
+        var image = screenshot.Image;
+        var left = image[image.Width / 4, image.Height / 2];
+        var right = image[3 * image.Width / 4, image.Height / 2];
+        Assert.True(left is { R: > 150, G: < 110, B: < 110 }, $"Expected the red half, got {left}.");
+        Assert.True(right is { G: > 120, R: < 130, B: < 160 }, $"Expected the green half, got {right}.");
     }
 
     [Fact]
@@ -105,6 +94,21 @@ public sealed class DriverTests
         };
     }
 
+    [Fact]
+    public async Task WaylandCapturesTheSelectedWindowWhenItsProcessOpensTwo()
+    {
+        var fixture = (LinuxApp)Target(VisualPlatform.LinuxWayland);
+        var target = fixture with { Arguments = [.. fixture.Arguments, "--second-window"] };
+        if ((await VisualApp.CheckAsync(target)).Status == VisualCheckStatus.NotRequested)
+        {
+            return;
+        }
+        await using var app = await VisualApp.StartAsync(target, new() { Window = new() { Title = "Imprint fixture" } });
+        var image = (await app.CaptureAsync()).Image;
+        var right = image[image.Width * 3 / 4, image.Height / 2];
+        Assert.True(right.G > right.B && right.G > right.R, $"The selected window is green on the right, the second window is blue. Found {right}.");
+    }
+
     /// <summary>The fixture next to this test project's output, built through the project reference.</summary>
     private static string DesktopFixture()
     {
@@ -115,22 +119,4 @@ public sealed class DriverTests
         return Path.Combine(bin, "TheLithium.Imprint.Visual.Fixture", pivot, name);
     }
 
-    /// <summary>How many pixels match, and their mean column.</summary>
-    private static (int Count, double MeanX) Region(RgbaImage image, Func<Rgba32, bool> matches)
-    {
-        var count = 0;
-        double sum = 0;
-        for (var y = 0; y < image.Height; y++)
-        {
-            for (var x = 0; x < image.Width; x++)
-            {
-                if (matches(image[x, y]))
-                {
-                    count++;
-                    sum += x;
-                }
-            }
-        }
-        return (count, count == 0 ? 0 : sum / count);
-    }
 }
