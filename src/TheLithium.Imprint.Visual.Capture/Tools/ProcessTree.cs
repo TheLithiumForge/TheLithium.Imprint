@@ -1,27 +1,25 @@
 using System.Globalization;
-using System.Runtime.Versioning;
 
 namespace TheLithium.Imprint.Visual.Tools;
 
-/// <summary>A process and every process it started, so a launcher that starts the real app still finds its window.</summary>
 internal static class ProcessTree
 {
+    /// <summary>A process and its descendants, for an attached app that shares its host's process group.</summary>
     internal static async Task<IReadOnlySet<int>> OfAsync(int root, CancellationToken cancellationToken)
     {
-        IEnumerable<(int Id, int Parent)> pairs;
         if (OperatingSystem.IsWindows())
         {
-            pairs = Platforms.Windows.WindowsNative.ProcessParents();
+            return Descendants(root, Platforms.Windows.WindowsNative.ProcessParents());
         }
-        else if (OperatingSystem.IsLinux())
-        {
-            pairs = LinuxParents();
-        }
-        else
-        {
-            pairs = await PsParentsAsync(cancellationToken).ConfigureAwait(false);
-        }
-        return Descendants(root, pairs);
+        var processes = await UnixProcessesAsync(cancellationToken).ConfigureAwait(false);
+        return Descendants(root, processes.Select(process => (process.Id, process.Parent)));
+    }
+
+    /// <summary>Live members of a private Unix process group, including children whose launcher has exited.</summary>
+    internal static async Task<IReadOnlySet<int>> GroupAsync(int group, CancellationToken cancellationToken)
+    {
+        var processes = await UnixProcessesAsync(cancellationToken).ConfigureAwait(false);
+        return processes.Where(process => process.Group == group).Select(process => process.Id).ToHashSet();
     }
 
     internal static HashSet<int> Descendants(int root, IEnumerable<(int Id, int Parent)> pairs)
@@ -42,54 +40,49 @@ internal static class ProcessTree
         return tree;
     }
 
-    [SupportedOSPlatform("linux")]
-    private static IEnumerable<(int, int)> LinuxParents()
+    private static async Task<List<(int Id, int Parent, int Group)>> UnixProcessesAsync(CancellationToken cancellationToken)
     {
-        foreach (var directory in Directory.EnumerateDirectories("/proc"))
+        var processes = new List<(int, int, int)>();
+        if (OperatingSystem.IsLinux())
         {
-            if (!int.TryParse(Path.GetFileName(directory), NumberStyles.None, CultureInfo.InvariantCulture, out var id))
+            foreach (var directory in Directory.EnumerateDirectories("/proc"))
             {
-                continue;
-            }
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!Pid(Path.GetFileName(directory), out var id))
+                {
+                    continue;
+                }
+                string stat;
+                try
+                {
+                    stat = File.ReadAllText(Path.Combine(directory, "stat"));
+                }
+                catch (IOException) { continue; }
+                catch (UnauthorizedAccessException) { continue; }
 
-            string stat;
-            try
-            {
-                stat = File.ReadAllText(Path.Combine(directory, "stat"));
+                // The command in parentheses can contain spaces and closing parentheses.
+                var fields = stat[(stat.LastIndexOf(')') + 2)..].Split(' ', 4);
+                if (fields.Length >= 3 && fields[0] != "Z" && Pid(fields[1], out var parent) && Pid(fields[2], out var group))
+                {
+                    processes.Add((id, parent, group));
+                }
             }
-            catch (IOException)
-            {
-                continue;
-            }
-            catch (UnauthorizedAccessException)
-            {
-                continue;
-            }
-
-            // The command name is in parentheses and can hold spaces, so fields are counted after the last ')'.
-            var fields = stat[(stat.LastIndexOf(')') + 2)..].Split(' ');
-            if (fields.Length > 1 && int.TryParse(fields[1], NumberStyles.None, CultureInfo.InvariantCulture, out var parent))
-            {
-                yield return (id, parent);
-            }
+            return processes;
         }
-    }
 
-    private static async Task<IEnumerable<(int, int)>> PsParentsAsync(CancellationToken cancellationToken)
-    {
-        var text = await ToolProcess.RunTextAsync("/bin/ps", ["-A", "-o", "pid=", "-o", "ppid="], ToolRun.Text(TimeSpan.FromSeconds(10)), cancellationToken)
-            .ConfigureAwait(false);
-        var pairs = new List<(int, int)>();
+        var text = await ToolProcess.RunTextAsync("/bin/ps", ["-A", "-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "stat="],
+            ToolRun.Text(TimeSpan.FromSeconds(10)), cancellationToken).ConfigureAwait(false);
         foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 2
-                && int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var id)
-                && int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var parent))
+            if (parts.Length == 4 && parts[3][0] != 'Z' && Pid(parts[0], out var id)
+                && Pid(parts[1], out var parent) && Pid(parts[2], out var group))
             {
-                pairs.Add((id, parent));
+                processes.Add((id, parent, group));
             }
         }
-        return pairs;
+        return processes;
     }
+
+    private static bool Pid(string text, out int pid) => int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out pid);
 }

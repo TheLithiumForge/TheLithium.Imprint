@@ -15,7 +15,7 @@ public sealed class VisualApp : IAsyncDisposable
     private readonly ICaptureSession _capture;
     private readonly VisualAppOptions _options;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private int _disposed;
+    private Task? _disposal;
 
     private VisualApp(VisualPlatform platform, CaptureSource source, IPlatformSession session, ICaptureSession capture, VisualAppOptions options)
     {
@@ -88,49 +88,96 @@ public sealed class VisualApp : IAsyncDisposable
     /// <summary>Captures the window once it has settled, as <see cref="CaptureStability"/> describes.</summary>
     public async Task<Screenshot> CaptureAsync(CaptureOptions? options = null, CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        ThrowIfDisposing();
         var stability = ResolvedStability.Defaults;
+        var maxPixels = SnapshotLimits.DefaultImagePixels;
         if (Snapshots.Active is { } scope)
         {
             stability = stability.Apply(scope.ResolvedSettings.Visual.Stability);
+            maxPixels = scope.ResolvedSettings.Visual.MaxPixelsPerImage;
         }
         stability = stability.Apply(_options.Stability).Apply(options?.Stability);
 
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var entered = false;
+        Task lastRead = Task.CompletedTask;
         try
         {
-            var image = await StableCapture.CaptureAsync(_capture.CaptureAsync, stability, cancellationToken).ConfigureAwait(false);
-            if (options?.Region is { } region)
-            {
-                image = image.Crop(region);
-            }
+            var image = await StableCapture.CaptureAsync(StartFrame, stability, options?.Region, cancellationToken).ConfigureAwait(false);
             return new(image, Platform, Source, _options.Comparison);
         }
         finally
         {
+            // A timed-out native read can still be using the session. It keeps the gate until it returns.
+            _ = ReleaseAfterReadAsync();
+        }
+
+        Task<RgbaImage> StartFrame(CancellationToken token)
+        {
+            // Some drivers enter a synchronous OS call before returning a Task.
+            var frame = Task.Run(() => ReadFrameAsync(token), token);
+            lastRead = frame;
+            return frame;
+        }
+
+        async Task<RgbaImage> ReadFrameAsync(CancellationToken token)
+        {
+            if (!entered)
+            {
+                await _gate.WaitAsync(token).ConfigureAwait(false);
+                entered = true;
+                ThrowIfDisposing();
+            }
+            return await _capture.CaptureAsync(maxPixels, token).ConfigureAwait(false);
+        }
+
+        async Task ReleaseAfterReadAsync()
+        {
+            await lastRead.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            if (entered)
+            {
+                _gate.Release();
+            }
+        }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        lock (_gate)
+        {
+            return new(_disposal ??= DisposeSessionsAsync());
+        }
+    }
+
+    private void ThrowIfDisposing()
+    {
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposal is not null, this);
+        }
+    }
+
+    private async Task DisposeSessionsAsync()
+    {
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            try
+            {
+                await _capture.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                await _session.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            // Calls that were queued before disposal still need to enter the gate and see the disposed state.
             _gate.Release();
         }
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-        {
-            return;
-        }
-
-        try
-        {
-            await _capture.DisposeAsync().ConfigureAwait(false);
-        }
-        finally
-        {
-            await _session.DisposeAsync().ConfigureAwait(false);
-            _gate.Dispose();
-        }
-    }
-
-    private static async Task<VisualApp> AttachSourceAsync(VisualPlatform platform, ICaptureSource source, IPlatformSession session,
+    internal static async Task<VisualApp> AttachSourceAsync(VisualPlatform platform, ICaptureSource source, IPlatformSession session,
         VisualAppOptions options, CancellationToken cancellationToken)
     {
         try

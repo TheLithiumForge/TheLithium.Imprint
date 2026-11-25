@@ -9,14 +9,12 @@ internal static class ImageAssertion
     internal const string Extension = ".png";
 
     /// <summary>
-    /// Resolves the comparison from the built-in default, the project file, then each of <paramref name="layers"/> in
-    /// order, then the options, and stages the image as PNG with a comparer for that comparison.
+    /// Encodes the image and resolves comparison settings in project, platform, app and assertion order.
     /// </summary>
-    internal static void Stage(RgbaImage image, ImageStaging request, params ReadOnlySpan<ImageComparison?> layers)
+    internal static BinaryCapture Encode(RgbaImage image, ImageStaging request, VisualSettings visual,
+        string? platform = null, ImageComparison? appComparison = null)
     {
         ArgumentNullException.ThrowIfNull(image);
-        var scope = Snapshots.Current;
-        var visual = scope.ResolvedSettings.Visual;
         if ((long)image.Width * image.Height > visual.MaxPixelsPerImage)
         {
             throw new SnapshotCaptureException(
@@ -24,35 +22,25 @@ internal static class ImageAssertion
         }
 
         var comparison = ResolvedImageComparison.Defaults.Apply(Patch(visual.Comparison));
-        foreach (var layer in layers)
+        if (platform is not null && visual.Platforms.TryGetValue(platform, out var platformSettings))
         {
-            comparison = comparison.Apply(layer);
+            comparison = comparison.Apply(Patch(platformSettings));
         }
-        comparison = comparison.Apply(request.Options?.Comparison);
+        comparison = comparison.Apply(appComparison).Apply(request.Options?.Comparison);
         Validate(comparison, image);
 
-        scope.CaptureBinary(new()
+        return new()
         {
             Name = request.Name,
             Expression = request.Expression,
             Extension = Extension,
             Content = image.ToPng(),
             Update = request.Update ?? request.Options?.Update ?? SnapshotUpdate.Inherit,
-            Comparer = new ImageSnapshotComparer(image, comparison, request.Options?.Comparer ?? DefaultImageComparer.Instance, visual.MaxPixelsPerImage)
-        });
+            Comparer = new ImageSnapshotComparer(comparison, request.Options?.Comparer ?? DefaultImageComparer.Instance, visual.MaxPixelsPerImage)
+        };
     }
 
-    /// <summary>The platform layer from <c>visual.platforms</c>, for screenshots that know their platform.</summary>
-    internal static ImageComparison? Platform(string platform)
-    {
-        if (!Snapshots.Current.ResolvedSettings.Visual.Platforms.TryGetValue(platform, out var settings))
-        {
-            return null;
-        }
-        return Patch(settings);
-    }
-
-    internal static ImageComparison Patch(ImageComparisonSettings settings) => new()
+    private static ImageComparison Patch(ImageComparisonSettings settings) => new()
     {
         ChannelTolerance = settings.ChannelTolerance,
         MaxDifferingPercent = settings.MaxDifferingPercent,

@@ -13,9 +13,6 @@ namespace TheLithium.Imprint.Visual.Platforms.Linux;
 /// </summary>
 internal sealed class X11Driver : IPlatformDriver
 {
-    internal const int Width = 1920;
-    internal const int Height = 1080;
-
     public Task<string?> FindProblemAsync(AppTarget target, CancellationToken cancellationToken)
         => Task.FromResult(Problem(target));
 
@@ -65,13 +62,9 @@ internal sealed class X11Driver : IPlatformDriver
 
     private static string? Problem(AppTarget target)
     {
-        if (!OperatingSystem.IsLinux())
+        if (LinuxEnvironment.FindProblem(target) is { } problem)
         {
-            return "Linux apps need a Linux test machine.";
-        }
-        if (target is LinuxApp app && !File.Exists(app.Executable))
-        {
-            return $"The app {app.Executable} doesn't exist.";
+            return problem;
         }
         if (ToolLocator.Find("Xvfb") is null)
         {
@@ -95,40 +88,23 @@ internal sealed class X11Driver : IPlatformDriver
 /// clients with its random cookie, kept in an Xauthority file only this user can read.
 /// </summary>
 [SupportedOSPlatform("linux")]
-internal sealed class X11Display : IAsyncDisposable
+internal sealed class X11Display(string name, FileStream reservation) : IAsyncDisposable
 {
-    private readonly FileStream _reservation;
-    private readonly OwnedProcess _server;
-    private readonly OwnedProcess _manager;
-    private readonly string _directory;
+    private readonly X11Authority _authority = new();
+    private OwnedProcess? _server;
+    private OwnedProcess? _manager;
     private int _disposed;
 
-    private X11Display(string name, X11Authority authority, FileStream reservation, OwnedProcess server, OwnedProcess manager, nint connection)
-    {
-        Name = name;
-        AuthorityFile = authority.File;
-        _directory = authority.Directory;
-        _reservation = reservation;
-        _server = server;
-        _manager = manager;
-        Connection = connection;
-    }
-
-    internal string Name
-    {
-        get;
-    }
+    internal string Name => name;
 
     /// <summary>The Xauthority file with this display's cookie, for XAUTHORITY.</summary>
-    internal string AuthorityFile
-    {
-        get;
-    }
+    internal string AuthorityFile => _authority.File;
 
     /// <summary>This session's own connection, used only by its capture calls.</summary>
     internal nint Connection
     {
         get;
+        private set;
     }
 
     internal static async Task<X11Display> StartAsync(CancellationToken cancellationToken)
@@ -136,6 +112,7 @@ internal sealed class X11Display : IAsyncDisposable
         Initialize();
         for (var number = 90; number < 200; number++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (File.Exists($"/tmp/.X{number}-lock") || File.Exists($"/tmp/.X11-unix/X{number}"))
             {
                 continue;
@@ -146,42 +123,42 @@ internal sealed class X11Display : IAsyncDisposable
                 continue;
             }
 
-            var name = string.Create(CultureInfo.InvariantCulture, $":{number}");
-            var authority = X11Authority.Create(number);
-            var server = OwnedProcess.Start(ToolLocator.Find("Xvfb") ?? "Xvfb",
-                [name, "-auth", authority.File, "-screen", "0", $"{X11Driver.Width}x{X11Driver.Height}x24", "-nolisten", "tcp", "-noreset"],
-                new Dictionary<string, string?>(), null);
-            var connection = await ConnectAsync(name, authority, server, cancellationToken).ConfigureAwait(false);
-            if (connection == 0)
-            {
-                await server.DisposeAsync().ConfigureAwait(false);
-                await reservation.DisposeAsync().ConfigureAwait(false);
-                authority.Delete();
-                continue;
-            }
-
-            OwnedProcess? manager = null;
+            var display = new X11Display(string.Create(CultureInfo.InvariantCulture, $":{number}"), reservation);
+            var ready = false;
             try
             {
-                manager = OwnedProcess.Start(ToolLocator.Find("openbox") ?? "openbox", ["--sm-disable"],
-                    new Dictionary<string, string?> { ["DISPLAY"] = name, ["XAUTHORITY"] = authority.File }, null);
-                await WaitForManagerAsync(connection, manager, cancellationToken).ConfigureAwait(false);
-                return new(name, authority, reservation, server, manager, connection);
-            }
-            catch
-            {
-                XCloseDisplay(connection);
-                if (manager is not null)
+                ready = await display.OpenAsync(number, cancellationToken).ConfigureAwait(false);
+                if (ready)
                 {
-                    await manager.DisposeAsync().ConfigureAwait(false);
+                    return display;
                 }
-                await server.DisposeAsync().ConfigureAwait(false);
-                await reservation.DisposeAsync().ConfigureAwait(false);
-                authority.Delete();
-                throw;
+            }
+            finally
+            {
+                if (!ready)
+                {
+                    await display.DisposeAsync().ConfigureAwait(false);
+                }
             }
         }
         throw new SnapshotCaptureException("No free X display between :90 and :199 for Xvfb.");
+    }
+
+    private async Task<bool> OpenAsync(int number, CancellationToken cancellationToken)
+    {
+        _authority.Write(number);
+        _server = OwnedProcess.Start(ToolLocator.Find("Xvfb") ?? "Xvfb",
+            [Name, "-auth", AuthorityFile, "-screen", "0", $"{LinuxEnvironment.Width}x{LinuxEnvironment.Height}x24", "-nolisten", "tcp", "-noreset"],
+            new Dictionary<string, string?>(), null);
+        Connection = await ConnectAsync(Name, _authority, _server, cancellationToken).ConfigureAwait(false);
+        if (Connection == 0)
+        {
+            return false;
+        }
+        _manager = OwnedProcess.Start(ToolLocator.Find("openbox") ?? "openbox", ["--sm-disable"],
+            new Dictionary<string, string?> { ["DISPLAY"] = Name, ["XAUTHORITY"] = AuthorityFile }, null);
+        await WaitForManagerAsync(Connection, _manager, cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     public async ValueTask DisposeAsync()
@@ -192,11 +169,20 @@ internal sealed class X11Display : IAsyncDisposable
             return;
         }
 
-        XCloseDisplay(Connection);
-        await _manager.DisposeAsync().ConfigureAwait(false);
-        await _server.DisposeAsync().ConfigureAwait(false);
-        await _reservation.DisposeAsync().ConfigureAwait(false);
-        new X11Authority(_directory, AuthorityFile, []).Delete();
+        try
+        {
+            await using var server = _server;
+            await using var manager = _manager;
+            if (Connection != 0)
+            {
+                XCloseDisplay(Connection);
+            }
+        }
+        finally
+        {
+            _authority.Delete();
+            await reservation.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     /// <summary>Connects once Xvfb accepts clients, or returns 0 if it exited, e.g. because the display was taken.</summary>
@@ -244,13 +230,12 @@ internal sealed class X11Session(X11Display display, OwnedProcess process, Sessi
     private int _disposed;
 
     internal async Task WaitForWindowAsync(CancellationToken cancellationToken)
-        => _frame = (await PlatformDrivers.WaitForAsync<Box>(async token =>
+        => _frame = (await PlatformDrivers.WaitForAsync<WindowInfo>(async token =>
         {
-            var tree = await ProcessTree.OfAsync(process.Id, token).ConfigureAwait(false);
-            var matching = Windows(tree).Where(window => settings.Window?.Matches(window.Title) ?? true).ToList();
+            var matching = await MatchingAsync(token).ConfigureAwait(false);
             if (matching.Count == 1)
             {
-                return (new Box(matching[0].Frame), "");
+                return (matching[0], "");
             }
 
             var problem = PlatformDrivers.WindowProblem(matching.Select(window => window.Describe()).ToList(), settings.Window, settings.StartTimeout);
@@ -261,7 +246,27 @@ internal sealed class X11Session(X11Display display, OwnedProcess process, Sessi
             return (null, problem);
         }, settings.StartTimeout, cancellationToken).ConfigureAwait(false)).Frame;
 
-    public unsafe Task<RgbaImage> CaptureAsync(CancellationToken cancellationToken)
+    public async Task<RgbaImage> CaptureAsync(int maxPixels, CancellationToken cancellationToken)
+    {
+        var matching = await MatchingAsync(cancellationToken).ConfigureAwait(false);
+        if (matching.Count > 1)
+        {
+            throw new SnapshotCaptureException(PlatformDrivers.WindowProblem(matching.Select(window => window.Describe()).ToList(), settings.Window, settings.StartTimeout));
+        }
+        if (matching.Count == 0 || matching[0].Frame != _frame)
+        {
+            throw new SnapshotCaptureException("The selected X11 window closed, was hidden or no longer matched the selector.");
+        }
+        return CopyFrame(maxPixels);
+    }
+
+    private async Task<List<WindowInfo>> MatchingAsync(CancellationToken cancellationToken)
+    {
+        var tree = await process.MembersAsync(cancellationToken).ConfigureAwait(false);
+        return Windows(tree).Where(window => settings.Window?.Matches(window.Title) ?? true).ToList();
+    }
+
+    private unsafe RgbaImage CopyFrame(int maxPixels)
     {
         var connection = display.Connection;
         if (XGetWindowAttributes(connection, _frame, out var frame) == 0 || frame.MapState != IsViewable)
@@ -269,14 +274,12 @@ internal sealed class X11Session(X11Display display, OwnedProcess process, Sessi
             throw new SnapshotCaptureException("The app's window closed or was hidden during the capture.");
         }
 
+        var border = frame.BorderWidth;
+        var bounds = new PixelRect(frame.X, frame.Y, frame.Width + 2 * border, frame.Height + 2 * border);
+        LinuxEnvironment.CheckBounds(bounds, maxPixels);
         XRaiseWindow(connection, _frame);
         XSync(connection, 0);
-        var border = frame.BorderWidth;
-        var left = Math.Max(0, frame.X);
-        var top = Math.Max(0, frame.Y);
-        var width = Math.Min(frame.Width + 2 * border, X11Driver.Width - left);
-        var height = Math.Min(frame.Height + 2 * border, X11Driver.Height - top);
-        var image = XGetImage(connection, XDefaultRootWindow(connection), left, top, (uint)width, (uint)height, nuint.MaxValue, ZPixmap);
+        var image = XGetImage(connection, XDefaultRootWindow(connection), bounds.X, bounds.Y, (uint)bounds.Width, (uint)bounds.Height, nuint.MaxValue, ZPixmap);
         if (image is null)
         {
             throw new SnapshotCaptureException("The X server returned no image for the window.");
@@ -284,7 +287,7 @@ internal sealed class X11Session(X11Display display, OwnedProcess process, Sessi
 
         try
         {
-            return Task.FromResult(Convert(image));
+            return Convert(image);
         }
         finally
         {
@@ -298,8 +301,14 @@ internal sealed class X11Session(X11Display display, OwnedProcess process, Sessi
         {
             return;
         }
-        await process.DisposeAsync().ConfigureAwait(false);
-        await display.DisposeAsync().ConfigureAwait(false);
+        try
+        {
+            await process.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            await display.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     /// <summary>Normal client windows from _NET_CLIENT_LIST whose process is in the app's tree, with their frames.</summary>
@@ -346,7 +355,6 @@ internal sealed class X11Session(X11Display display, OwnedProcess process, Sessi
         internal string Describe() => $"\"{Title}\", process {ProcessId}, {Width}x{Height}";
     }
 
-    private sealed record Box(nuint Frame);
 }
 
 /// <summary>
@@ -354,23 +362,24 @@ internal sealed class X11Session(X11Display display, OwnedProcess process, Sessi
 /// 0600, so no other local user can connect to the display, read its screen or send it input.
 /// </summary>
 [SupportedOSPlatform("linux")]
-internal sealed record X11Authority(string Directory, string File, byte[] Cookie)
+internal sealed class X11Authority
 {
     private const ushort AnyHost = 0xFFFF;
+    private readonly string _directory = Path.Combine("/tmp", "imprint-x11-" + Guid.NewGuid().ToString("N"));
 
-    internal static X11Authority Create(int display)
+    internal string File => Path.Combine(_directory, "Xauthority");
+    internal byte[] Cookie { get; } = System.Security.Cryptography.RandomNumberGenerator.GetBytes(16);
+
+    internal void Write(int display)
     {
-        var directory = Path.Combine("/tmp", "imprint-x11-" + Guid.NewGuid().ToString("N")[..12]);
-        System.IO.Directory.CreateDirectory(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        var cookie = System.Security.Cryptography.RandomNumberGenerator.GetBytes(16);
-        var file = Path.Combine(directory, "Xauthority");
+        Directory.CreateDirectory(_directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         var options = new FileStreamOptions
         {
             Mode = FileMode.CreateNew,
             Access = FileAccess.Write,
             UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite
         };
-        using (var output = new FileStream(file, options))
+        using (var output = new FileStream(File, options))
         {
             // One entry: family, address, display number, protocol name and cookie, each length-prefixed big-endian.
             Span<byte> family = stackalloc byte[2];
@@ -379,16 +388,15 @@ internal sealed record X11Authority(string Directory, string File, byte[] Cookie
             Field(output, []);
             Field(output, System.Text.Encoding.ASCII.GetBytes(display.ToString(CultureInfo.InvariantCulture)));
             Field(output, "MIT-MAGIC-COOKIE-1"u8);
-            Field(output, cookie);
+            Field(output, Cookie);
         }
-        return new(directory, file, cookie);
     }
 
     internal void Delete()
     {
         try
         {
-            System.IO.Directory.Delete(Directory, recursive: true);
+            Directory.Delete(_directory, recursive: true);
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
@@ -406,6 +414,34 @@ internal sealed record X11Authority(string Directory, string File, byte[] Cookie
 /// <summary>The environment for a Linux app: fixed scale, the display, then the target's and the source's variables.</summary>
 internal static class LinuxEnvironment
 {
+    internal const int Width = 1920;
+    internal const int Height = 1080;
+
+    internal static void CheckBounds(PixelRect bounds, int maxPixels)
+    {
+        if (!bounds.FitsIn(Width, Height))
+        {
+            throw new SnapshotCaptureException($"The window at {bounds} is empty or extends outside the {Width}x{Height} display.");
+        }
+        if ((long)bounds.Width * bounds.Height > maxPixels)
+        {
+            throw new SnapshotCaptureException($"The {bounds.Width}x{bounds.Height} window exceeds the {maxPixels}-pixel limit.");
+        }
+    }
+
+    internal static string? FindProblem(AppTarget target)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return "Linux apps need a Linux test machine.";
+        }
+        if (target is LinuxApp app && !File.Exists(app.Executable))
+        {
+            return $"The app {app.Executable} doesn't exist.";
+        }
+        return File.Exists("/bin/bash") ? null : "Install Bash at /bin/bash to start the app in its own process group.";
+    }
+
     internal static Dictionary<string, string?> For(LinuxApp app, LaunchPlan plan, IReadOnlyDictionary<string, string?> display)
     {
         var environment = new Dictionary<string, string?>(StringComparer.Ordinal)

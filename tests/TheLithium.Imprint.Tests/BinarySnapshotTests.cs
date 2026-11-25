@@ -71,16 +71,17 @@ public sealed class BinarySnapshotTests : IDisposable
     public void AMismatchFailsAndWritesEveryArtifact()
     {
         using var fixture = new Fixture();
-        Seed(fixture, First);
-        var failure = Assert.Throws<SnapshotMismatchException>(() => fixture.Run(() => Capture("screen", Second, new CountingComparer(Outcome.Different))));
+        var name = new string('a', 96);
+        fixture.Run(() => Capture(name, First, new CountingComparer(Outcome.Different)), SnapshotUpdate.Missing);
+        var failure = Assert.Throws<SnapshotMismatchException>(() => fixture.Run(() => Capture(name, Second, new CountingComparer(Outcome.Different))));
         var entry = Assert.Single(failure.Report.Entries);
         Assert.Equal(SnapshotStatus.Changed, entry.Status);
         Assert.Equal("3 pixels differ.", entry.Difference);
         var artifacts = Assert.IsType<string>(failure.Report.ArtifactDirectory);
-        Assert.Equal(Second, File.ReadAllBytes(Path.Combine(artifacts, "screen.received.png")));
-        Assert.Equal(First, File.ReadAllBytes(Path.Combine(artifacts, "screen.expected.png")));
-        Assert.Equal([7], File.ReadAllBytes(Path.Combine(artifacts, "screen.diff.png")));
-        Assert.Equal(First, File.ReadAllBytes(fixture.FilePath("screen.png")));
+        Assert.Equal(Second, File.ReadAllBytes(Path.Combine(artifacts, name + ".received.png")));
+        Assert.Equal(First, File.ReadAllBytes(Path.Combine(artifacts, name + ".expected.png")));
+        Assert.Equal([7], File.ReadAllBytes(Path.Combine(artifacts, name + ".diff.png")));
+        Assert.Equal(First, File.ReadAllBytes(fixture.FilePath(name + ".png")));
     }
 
     [Fact]
@@ -137,7 +138,7 @@ public sealed class BinarySnapshotTests : IDisposable
         using var fixture = new Fixture();
         fixture.Configure("""{ "visual": { "maxBytesPerImage": 4 } }""");
         var screen = First;
-        var failure = Assert.Throws<SnapshotCaptureException>(() => fixture.Run(() => Snapshots.Current.CaptureBinary(new()
+        var failure = Assert.Throws<SnapshotCaptureException>(() => fixture.Run(() => Snapshots.Current.CaptureBinary(_ => new()
         {
             Name = null,
             Expression = nameof(screen),
@@ -164,7 +165,7 @@ public sealed class BinarySnapshotTests : IDisposable
     public void OnlyKnownBinaryExtensionsAreAccepted()
     {
         using var fixture = new Fixture();
-        Assert.Throws<SnapshotCaptureException>(() => fixture.Run(() => Snapshots.Current.CaptureBinary(new()
+        Assert.Throws<SnapshotCaptureException>(() => fixture.Run(() => Snapshots.Current.CaptureBinary(_ => new()
         {
             Name = "screen",
             Expression = null,
@@ -230,7 +231,7 @@ public sealed class BinarySnapshotTests : IDisposable
     }
 
     private static void Capture(string name, byte[] content, IBinarySnapshotComparer comparer)
-        => Snapshots.Current.CaptureBinary(new()
+        => Snapshots.Current.CaptureBinary(_ => new()
         {
             Name = name,
             Expression = null,

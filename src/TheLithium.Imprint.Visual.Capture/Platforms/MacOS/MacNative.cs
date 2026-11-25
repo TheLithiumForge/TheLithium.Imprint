@@ -59,15 +59,22 @@ internal static unsafe partial class MacNative
     [LibraryImport(CoreFoundation)]
     private static partial void CFRelease(nint item);
 
-    /// <summary>Every normal-layer window on screen, with its owner, number, title and bounds in points.</summary>
-    internal static List<MacWindow> Windows()
+    // Keep one framework reference for the lifetime of its exported CFString constants.
+    private static class WindowKeys
     {
-        var library = NativeLibrary.Load(CoreGraphics);
-        var owner = Key(library, "kCGWindowOwnerPID");
-        var number = Key(library, "kCGWindowNumber");
-        var layer = Key(library, "kCGWindowLayer");
-        var bounds = Key(library, "kCGWindowBounds");
-        var name = Key(library, "kCGWindowName");
+        private static readonly nint Library = NativeLibrary.Load(CoreGraphics);
+        internal static readonly nint Owner = Key("kCGWindowOwnerPID");
+        internal static readonly nint Number = Key("kCGWindowNumber");
+        internal static readonly nint Layer = Key("kCGWindowLayer");
+        internal static readonly nint Bounds = Key("kCGWindowBounds");
+        internal static readonly nint Name = Key("kCGWindowName");
+
+        private static nint Key(string symbol) => *(nint*)NativeLibrary.GetExport(Library, symbol);
+    }
+
+    /// <summary>Normal-layer windows on screen for the given processes, with their bounds in points.</summary>
+    internal static List<MacWindow> Windows(IReadOnlySet<int> processes)
+    {
         var windows = new List<MacWindow>();
         var list = CGWindowListCopyWindowInfo(OnScreenOnly | ExcludeDesktopElements, 0);
         if (list == 0)
@@ -80,11 +87,18 @@ internal static unsafe partial class MacNative
             for (nint i = 0, count = CFArrayGetCount(list); i < count; i++)
             {
                 var window = CFArrayGetValueAtIndex(list, i);
-                if (Number(window, layer) != 0 || !CGRectMakeWithDictionaryRepresentation(CFDictionaryGetValue(window, bounds), out var rect))
+                var owner = (int)Number(window, WindowKeys.Owner);
+                if (!processes.Contains(owner) || Number(window, WindowKeys.Layer) != 0)
                 {
                     continue;
                 }
-                windows.Add(new((int)Number(window, owner), (uint)Number(window, number), Text(CFDictionaryGetValue(window, name)), rect));
+                var number = Number(window, WindowKeys.Number);
+                if (number is > 0 and <= uint.MaxValue
+                    && CGRectMakeWithDictionaryRepresentation(CFDictionaryGetValue(window, WindowKeys.Bounds), out var rect)
+                    && rect.Width > 1 && rect.Height > 1)
+                {
+                    windows.Add(new(owner, (uint)number, Text(CFDictionaryGetValue(window, WindowKeys.Name)), rect));
+                }
             }
         }
         finally
@@ -93,9 +107,6 @@ internal static unsafe partial class MacNative
         }
         return windows;
     }
-
-    /// <summary>A CFString constant such as kCGWindowOwnerPID, read from the framework's exported variable.</summary>
-    private static nint Key(nint library, string symbol) => *(nint*)NativeLibrary.GetExport(library, symbol);
 
     private static long Number(nint dictionary, nint key)
     {

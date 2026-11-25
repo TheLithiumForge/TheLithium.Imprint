@@ -33,6 +33,8 @@ public sealed class InstrumentedImageTests
             pixels[i] = i % 6 < count ? Rgba32.Opaque(200, 0, 0) : Rgba32.Opaque(0, 0, 200);
         }
 
-        RgbaImage.FromPixels(6, 4, pixels).AssertImage("bars");
+        AssertBars(RgbaImage.FromPixels(6, 4, pixels));
     }
+
+    private static void AssertBars(RgbaImage image) => image.AssertImage("bars");
 }

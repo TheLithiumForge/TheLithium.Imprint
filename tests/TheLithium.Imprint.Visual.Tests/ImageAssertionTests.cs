@@ -18,9 +18,7 @@ public sealed class ImageAssertionTests : IDisposable
         using var fixture = new Fixture();
         var screen = ComparerTests.Solid(6, 4, White);
         fixture.Run(() => screen.AssertImage(), SnapshotUpdate.Missing);
-        var stored = File.ReadAllBytes(fixture.FilePath("screen.png"));
-        Assert.Equal(screen.ToPng(), stored);
-        Assert.True(RgbaImage.FromPng(stored).PixelsEqual(screen));
+        Assert.Equal(screen.ToPng(), File.ReadAllBytes(fixture.FilePath("screen.png")));
     }
 
     [Fact]
@@ -94,13 +92,20 @@ public sealed class ImageAssertionTests : IDisposable
     }
 
     [Fact]
-    public void ARegionThatDoesNotFitFailsAtTheAssertion()
+    public void CatchingAnInvalidImageAssertionPreventsTheWholeUpdate()
     {
         using var fixture = new Fixture();
         var screen = ComparerTests.Solid(4, 4, White);
-        var failure = Assert.Throws<SnapshotCaptureException>(() => fixture.Run(
-            () => screen.AssertImage("screen", new() { Comparison = new() { IgnoreRegions = [new(2, 2, 4, 4)] } }), SnapshotUpdate.Missing));
-        Assert.Contains("doesn't fit inside the 4x4 image", failure.Message, StringComparison.Ordinal);
+        fixture.Run(() => screen.AssertImage("screen"), SnapshotUpdate.Missing);
+
+        Assert.Throws<SnapshotCaptureException>(() => fixture.Run(() =>
+        {
+            screen.AssertImage("other");
+            Assert.Throws<SnapshotCaptureException>(() =>
+                screen.AssertImage("screen", new() { Comparison = new() { IgnoreRegions = [new(2, 2, 4, 4)] } }));
+        }, SnapshotUpdate.All));
+
+        fixture.Run(() => screen.AssertImage("screen"), SnapshotUpdate.Verify);
     }
 
     [Fact]

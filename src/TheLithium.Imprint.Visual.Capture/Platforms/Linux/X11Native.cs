@@ -11,7 +11,7 @@ internal static unsafe partial class X11Native
     private const string Library = "libX11.so.6";
     internal const int IsViewable = 2;
     internal const int ZPixmap = 2;
-    private static int _initialized;
+    private static bool _initialized;
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct WindowAttributes
@@ -137,10 +137,18 @@ internal static unsafe partial class X11Native
     /// <summary>Makes Xlib thread safe and stops an X error from ending the test process. Runs once, before any other call.</summary>
     internal static void Initialize()
     {
-        if (Interlocked.Exchange(ref _initialized, 1) == 0)
+        lock (Authorization)
         {
-            XInitThreads();
+            if (_initialized)
+            {
+                return;
+            }
+            if (XInitThreads() == 0)
+            {
+                throw new SnapshotCaptureException("libX11 couldn't initialize support for concurrent capture sessions.");
+            }
             XSetErrorHandler(&IgnoreError);
+            _initialized = true;
         }
     }
 
@@ -229,7 +237,7 @@ internal static unsafe partial class X11Native
                 pixels[y * width + x] = Rgba32.Opaque(Channel(value, redShift, redBits), Channel(value, greenShift, greenBits), Channel(value, blueShift, blueBits));
             }
         }
-        return RgbaImage.FromPixels(width, height, pixels);
+        return new RgbaImage(width, height, pixels);
     }
 
     private static (int Shift, int Bits) Mask(nuint mask)

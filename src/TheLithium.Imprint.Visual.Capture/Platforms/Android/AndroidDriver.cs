@@ -1,5 +1,4 @@
 using System.Text;
-using TheLithium.Imprint.Configuration;
 using TheLithium.Imprint.Visual.Sources;
 using TheLithium.Imprint.Visual.Tools;
 
@@ -54,7 +53,6 @@ internal sealed class AndroidDriver : IPlatformDriver
         var session = new AndroidSession(device, hold, app.PackageName);
         try
         {
-            await session.PrepareAsync(cancellationToken).ConfigureAwait(false);
             if (app.Apk is { } apk)
             {
                 var installed = await ToolProcess.RunTextAsync(adb, ["-s", serial, "install", "-r", "-t", apk], ToolRun.Text(TimeSpan.FromMinutes(3)), cancellationToken)
@@ -64,6 +62,7 @@ internal sealed class AndroidDriver : IPlatformDriver
                     throw new SnapshotCaptureException($"adb install {apk} didn't succeed: {installed}");
                 }
             }
+            await session.PrepareAsync(cancellationToken).ConfigureAwait(false);
             await session.LaunchAsync(app.Activity, app.Extras.Concat(plan.ExtraEnvironment), settings.StartTimeout, cancellationToken).ConfigureAwait(false);
             return session;
         }
@@ -77,7 +76,7 @@ internal sealed class AndroidDriver : IPlatformDriver
     public Task<IPlatformSession> AttachAsync(int processId, SessionSettings settings, CancellationToken cancellationToken)
         => throw new SnapshotCaptureException("Attaching works on Windows and macOS. Start Android apps with StartAsync.");
 
-    private static string? Adb()
+    internal static string? Adb()
     {
         var name = OperatingSystem.IsWindows() ? "adb.exe" : "adb";
         return ToolLocator.Find("adb",
@@ -152,23 +151,42 @@ internal sealed class AndroidSession(AdbDevice device, FileStream hold, string p
 {
     private static readonly string[] Animations = ["window_animation_scale", "transition_animation_scale", "animator_duration_scale"];
     private readonly Dictionary<string, string?> _saved = new(StringComparer.Ordinal);
-    private bool _demo;
+    private bool _enteredDemo;
+    private bool _launchRequested;
     private int _disposed;
 
     internal async Task PrepareAsync(CancellationToken cancellationToken)
     {
-        foreach (var name in Animations.Append("sysui_demo_allowed"))
-        {
-            var value = await device.ShellAsync(["settings", "get", "global", name], cancellationToken).ConfigureAwait(false);
-            _saved[name] = value == "null" ? null : value;
-        }
         foreach (var name in Animations)
         {
+            var value = await device.ShellAsync(["settings", "get", "global", name], cancellationToken).ConfigureAwait(false);
+            if (value == "0")
+            {
+                continue;
+            }
+            _saved[name] = value == "null" ? null : value;
             await device.ShellAsync(["settings", "put", "global", name, "0"], cancellationToken).ConfigureAwait(false);
         }
 
-        await device.ShellAsync(["settings", "put", "global", "sysui_demo_allowed", "1"], cancellationToken).ConfigureAwait(false);
-        _demo = true;
+        const string demoAllowed = "sysui_demo_allowed";
+        var previous = await device.ShellAsync(["settings", "get", "global", demoAllowed], cancellationToken).ConfigureAwait(false);
+        if (previous == "1")
+        {
+            // A broadcast can enter demo mode without changing the Settings app's demo switch.
+            // Only change existing demo settings when SystemUI confirms that no demo is running.
+            var state = await device.ShellAsync(["dumpsys", "activity", "service", "com.android.systemui/.SystemUIService", "DemoModeController"], cancellationToken)
+                .ConfigureAwait(false);
+            if (!state.Split('\n', StringSplitOptions.TrimEntries).Contains("isInDemoMode=false", StringComparer.Ordinal))
+            {
+                return;
+            }
+        }
+        else
+        {
+            _saved[demoAllowed] = previous == "null" ? null : previous;
+            await device.ShellAsync(["settings", "put", "global", demoAllowed, "1"], cancellationToken).ConfigureAwait(false);
+        }
+        _enteredDemo = true;
         string[][] demo =
         [
             ["command", "enter"],
@@ -191,7 +209,6 @@ internal sealed class AndroidSession(AdbDevice device, FileStream hold, string p
 
     internal async Task LaunchAsync(string? activity, IEnumerable<KeyValuePair<string, string>> extras, TimeSpan timeout, CancellationToken cancellationToken)
     {
-        await device.ShellAsync(["am", "force-stop", package], cancellationToken).ConfigureAwait(false);
         var component = activity is null ? await LauncherAsync(cancellationToken).ConfigureAwait(false) : $"{package}/{activity}";
         var arguments = new List<string> { "am", "start", "-W", "-n", component };
         foreach (var extra in extras)
@@ -203,16 +220,18 @@ internal sealed class AndroidSession(AdbDevice device, FileStream hold, string p
             arguments.AddRange(["--es", extra.Key, extra.Value]);
         }
 
+        await device.ShellAsync(["am", "force-stop", package], cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        // adb can be canceled after Android has started the app but before it reports success.
+        _launchRequested = true;
         var started = await device.ShellAsync(arguments, cancellationToken).ConfigureAwait(false);
         if (started.Contains("Error", StringComparison.Ordinal) || !started.Contains("Status: ok", StringComparison.Ordinal))
         {
             throw new SnapshotCaptureException($"am start {component} didn't succeed: {started}");
         }
 
-        // am start -W returns once the activity is launched, not drawn. Wait until it's the resumed activity.
         var deadline = DateTime.UtcNow + timeout;
-        while (!(await device.ShellAsync(["dumpsys", "activity", "activities"], cancellationToken).ConfigureAwait(false))
-            .Split('\n').Any(line => line.Contains("ResumedActivity", StringComparison.Ordinal) && line.Contains(package + "/", StringComparison.Ordinal)))
+        while (!await HasForegroundAsync(cancellationToken).ConfigureAwait(false))
         {
             if (DateTime.UtcNow >= deadline)
             {
@@ -222,8 +241,92 @@ internal sealed class AndroidSession(AdbDevice device, FileStream hold, string p
         }
     }
 
-    public async Task<RgbaImage> CaptureAsync(CancellationToken cancellationToken)
-        => RgbaImage.FromPng(await device.ScreenshotAsync(cancellationToken).ConfigureAwait(false), SnapshotLimits.MaximumImagePixels);
+    public async Task<RgbaImage> CaptureAsync(int maxPixels, CancellationToken cancellationToken)
+    {
+        await RequireForegroundAsync(cancellationToken).ConfigureAwait(false);
+        var png = await device.ScreenshotAsync(cancellationToken).ConfigureAwait(false);
+        await RequireForegroundAsync(cancellationToken).ConfigureAwait(false);
+        return RgbaImage.FromPng(png, maxPixels);
+    }
+
+    private async Task RequireForegroundAsync(CancellationToken cancellationToken)
+    {
+        if (!await HasForegroundAsync(cancellationToken).ConfigureAwait(false))
+        {
+            throw new SnapshotCaptureException($"{package} must be the only visible foreground app on the device's main display.");
+        }
+    }
+
+    private async Task<bool> HasForegroundAsync(CancellationToken cancellationToken)
+    {
+        // visible-apps lists the focus for each display, then the visible app windows with their actual package names.
+        var dump = await device.ShellAsync(["dumpsys", "window", "visible-apps"], cancellationToken).ConfigureAwait(false);
+        return ShowsOnlyTarget(dump, package);
+    }
+
+    private static bool ShowsOnlyTarget(string dump, string package)
+    {
+        const string windows = "WINDOW MANAGER WINDOWS";
+        var list = dump.IndexOf(windows, StringComparison.Ordinal);
+        if (list < 0 || FocusedWindow(dump) is not { } focus)
+        {
+            return false;
+        }
+        var needsOwner = false;
+        var focused = false;
+        var foundTarget = false;
+        var owner = $" package={package} ";
+        foreach (var raw in dump.AsSpan(list).EnumerateLines())
+        {
+            var line = raw.Trim();
+            if (line.StartsWith("Window #", StringComparison.Ordinal))
+            {
+                if (needsOwner)
+                {
+                    return false;
+                }
+                focused = line.EndsWith(focus, StringComparison.Ordinal);
+            }
+            else if (line.StartsWith("mDisplayId=", StringComparison.Ordinal))
+            {
+                needsOwner = line.StartsWith("mDisplayId=0 ", StringComparison.Ordinal);
+            }
+            else if (needsOwner && line.StartsWith("mOwnerUid=", StringComparison.Ordinal))
+            {
+                if (!line.Contains(owner, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+                foundTarget |= focused;
+                needsOwner = false;
+            }
+        }
+        return foundTarget && !needsOwner;
+    }
+
+    private static string? FocusedWindow(string dump)
+    {
+        var primary = false;
+        foreach (var raw in dump.AsSpan().EnumerateLines())
+        {
+            var line = raw.Trim();
+            if (line.StartsWith("Display: mDisplayId=", StringComparison.Ordinal))
+            {
+                var display = line["Display: mDisplayId=".Length..];
+                primary = display.SequenceEqual("0") || display.StartsWith("0 ", StringComparison.Ordinal);
+            }
+            else if (line.StartsWith("WINDOW MANAGER WINDOWS", StringComparison.Ordinal))
+            {
+                // Android 8 and 9 print the global focus after the window list.
+                primary = true;
+            }
+            else if (primary && line.StartsWith("mCurrentFocus=", StringComparison.Ordinal))
+            {
+                return line["mCurrentFocus=".Length..].ToString() + ":";
+            }
+        }
+        return null;
+    }
 
     public async ValueTask DisposeAsync()
     {
@@ -235,8 +338,11 @@ internal sealed class AndroidSession(AdbDevice device, FileStream hold, string p
         try
         {
             using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-            await Quietly(device.ShellAsync(["am", "force-stop", package], cleanup.Token)).ConfigureAwait(false);
-            if (_demo)
+            if (_launchRequested)
+            {
+                await Quietly(device.ShellAsync(["am", "force-stop", package], cleanup.Token)).ConfigureAwait(false);
+            }
+            if (_enteredDemo)
             {
                 await Quietly(device.ShellAsync(["am", "broadcast", "-a", "com.android.systemui.demo", "-e", "command", "exit"], cleanup.Token)).ConfigureAwait(false);
             }

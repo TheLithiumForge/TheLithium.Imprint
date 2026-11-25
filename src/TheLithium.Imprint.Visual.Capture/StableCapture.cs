@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using TheLithium.Imprint.Configuration.Models;
 using TheLithium.Imprint.Storage.Models;
 
@@ -11,58 +12,127 @@ namespace TheLithium.Imprint.Visual;
 /// </summary>
 internal static class StableCapture
 {
-    internal static async Task<RgbaImage> CaptureAsync(Func<CancellationToken, Task<RgbaImage>> capture, ResolvedStability stability, CancellationToken cancellationToken)
+    private static readonly TimeSpan LongestTimer = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
+
+    internal static async Task<RgbaImage> CaptureAsync(Func<CancellationToken, Task<RgbaImage>> capture, ResolvedStability stability,
+        PixelRect? region, CancellationToken cancellationToken)
     {
         var clock = Stopwatch.StartNew();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var timer = ArmDeadlineAsync(deadline, stability.Timeout);
         RgbaImage? previous = null;
         RgbaImage? last = null;
         var matching = 0;
         var stableSince = TimeSpan.Zero;
-        while (true)
+        try
         {
-            var started = clock.Elapsed;
-            var frame = await capture(cancellationToken).ConfigureAwait(false);
-            if (last is not null && frame.PixelsEqual(last))
+            while (clock.Elapsed < stability.Timeout)
             {
-                matching++;
-            }
-            else
-            {
+                deadline.Token.ThrowIfCancellationRequested();
+                var started = clock.Elapsed;
+                var frame = await capture(deadline.Token).WaitAsync(deadline.Token).ConfigureAwait(false);
                 previous = last;
-                last = frame;
-                matching = 1;
-                stableSince = started;
-            }
+                last = region is { } area ? frame.Crop(area) : frame;
+                if (previous is not null && last.PixelsEqual(previous))
+                {
+                    matching++;
+                }
+                else
+                {
+                    matching = 1;
+                    stableSince = clock.Elapsed;
+                }
 
-            if (matching >= stability.MatchingFrames && clock.Elapsed - stableSince >= stability.MinimumDuration)
-            {
-                return last;
-            }
-            if (clock.Elapsed >= stability.Timeout)
-            {
-                throw TimedOut(previous, last, stability);
-            }
+                deadline.Token.ThrowIfCancellationRequested();
+                var now = clock.Elapsed;
+                if (now >= stability.Timeout)
+                {
+                    break;
+                }
+                if (matching >= stability.MatchingFrames && now - stableSince >= stability.MinimumDuration)
+                {
+                    return last;
+                }
 
-            var wait = stability.Interval - (clock.Elapsed - started);
-            if (wait > TimeSpan.Zero)
-            {
-                await Task.Delay(wait, cancellationToken).ConfigureAwait(false);
+                var wait = stability.Interval - (now - started);
+                if (wait > TimeSpan.Zero)
+                {
+                    await DelayAsync(wait, deadline.Token).ConfigureAwait(false);
+                }
             }
         }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            // The deadline reports the sampled frames below. Caller cancellation flows out unchanged.
+        }
+        finally
+        {
+            if (!timer.IsCompleted)
+            {
+                await deadline.CancelAsync().ConfigureAwait(false);
+                await timer.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            }
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        throw TimedOut(previous, last, stability);
     }
 
-    private static SnapshotCaptureException TimedOut(RgbaImage? previous, RgbaImage last, ResolvedStability stability)
+    // A .NET timer can cover about 49 days. Code-level capture options accept any positive timeout.
+    private static async Task ArmDeadlineAsync(CancellationTokenSource deadline, TimeSpan timeout)
+    {
+        if (timeout > LongestTimer)
+        {
+            await DelayAsync(timeout - LongestTimer, deadline.Token).ConfigureAwait(false);
+            timeout = LongestTimer;
+        }
+        deadline.CancelAfter(timeout);
+    }
+
+    private static async Task DelayAsync(TimeSpan duration, CancellationToken cancellationToken)
+    {
+        while (duration > LongestTimer)
+        {
+            await Task.Delay(LongestTimer, cancellationToken).ConfigureAwait(false);
+            duration -= LongestTimer;
+        }
+        await Task.Delay(duration, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static SnapshotCaptureException TimedOut(RgbaImage? previous, RgbaImage? last, ResolvedStability stability)
     {
         var detail = "";
-        if (previous is not null)
+        if (last is not null)
         {
-            var changed = DefaultImageComparer.Instance.Compare(previous, last, ResolvedImageComparison.Defaults);
-            detail = changed.Difference is null ? "" : $" Between the last two frames: {changed.Difference}";
-            Diagnose("capture-timeout.previous.png", previous);
+            if (previous is not null)
+            {
+                detail = " Between the last two frames: " + Difference(previous, last);
+                Diagnose("capture-timeout.previous.png", previous);
+            }
+            Diagnose("capture-timeout.last.png", last);
         }
-        Diagnose("capture-timeout.last.png", last);
         return new(string.Create(CultureInfo.InvariantCulture,
-            $"The window kept changing for {stability.Timeout.TotalSeconds:0.#} seconds, so no frame was stable enough to compare.{detail} Stop animations for the test, or mask the changing area."));
+            $"The capture didn't return a stable frame within {stability.Timeout.TotalSeconds:0.###} seconds.{detail}"));
+    }
+
+    private static string Difference(RgbaImage previous, RgbaImage last)
+    {
+        if (previous.Width != last.Width || previous.Height != last.Height)
+        {
+            return string.Create(CultureInfo.InvariantCulture,
+                $"the size changed from {previous.Width}x{previous.Height} to {last.Width}x{last.Height}.");
+        }
+
+        var first = MemoryMarshal.Cast<Rgba32, uint>(previous.Pixels);
+        var second = MemoryMarshal.Cast<Rgba32, uint>(last.Pixels);
+        var changed = 0;
+        for (var i = 0; i < first.Length; i++)
+        {
+            if (first[i] != second[i])
+            {
+                changed++;
+            }
+        }
+        return string.Create(CultureInfo.InvariantCulture, $"{changed:N0} of {first.Length:N0} pixels differ.");
     }
 
     /// <summary>Keeps a frame with the test's failure artifacts when a test is running.</summary>

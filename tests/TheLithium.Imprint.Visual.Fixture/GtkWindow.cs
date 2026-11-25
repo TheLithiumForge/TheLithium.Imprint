@@ -12,10 +12,23 @@ internal static unsafe partial class GtkWindow
     private const string GLib = "libglib-2.0.so.0";
     private static (double R, double G, double B) _right;
 
-    internal static int Run(string title, (byte R, byte G, byte B) right)
+    internal static int Run(string title, (byte R, byte G, byte B) right, bool secondWindow)
     {
         _right = (right.R / 255.0, right.G / 255.0, right.B / 255.0);
         gtk_init();
+        Show(title, solidBlue: false);
+        if (secondWindow)
+        {
+            Show("Other window", solidBlue: true);
+        }
+        while (true)
+        {
+            g_main_context_iteration(0, 1);
+        }
+    }
+
+    private static void Show(string title, bool solidBlue)
+    {
         var window = gtk_window_new();
         gtk_window_set_title(window, title);
         gtk_window_set_default_size(window, Program.Width, Program.Height);
@@ -23,18 +36,21 @@ internal static unsafe partial class GtkWindow
         var area = gtk_drawing_area_new();
         gtk_drawing_area_set_content_width(area, Program.Width);
         gtk_drawing_area_set_content_height(area, Program.Height);
-        gtk_drawing_area_set_draw_func(area, &Draw, 0, 0);
+        gtk_drawing_area_set_draw_func(area, &Draw, solidBlue ? 1 : 0, 0);
         gtk_window_set_child(window, area);
         gtk_window_present(window);
-        while (true)
-        {
-            g_main_context_iteration(0, 1);
-        }
     }
 
     [UnmanagedCallersOnly]
-    private static void Draw(nint area, nint cairo, int width, int height, nint data)
+    private static void Draw(nint area, nint cairo, int width, int height, nint solidBlue)
     {
+        if (solidBlue != 0)
+        {
+            cairo_set_source_rgb(cairo, 0, 0, 1);
+            cairo_rectangle(cairo, 0, 0, width, height);
+            cairo_fill(cairo);
+            return;
+        }
         var middle = width / 2;
         cairo_set_source_rgb(cairo, Program.Left.R / 255.0, Program.Left.G / 255.0, Program.Left.B / 255.0);
         cairo_rectangle(cairo, 0, 0, middle, height);

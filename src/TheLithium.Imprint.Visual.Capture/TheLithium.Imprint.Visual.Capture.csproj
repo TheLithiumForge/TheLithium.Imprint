@@ -12,5 +12,8 @@
     <InternalsVisibleTo Include="TheLithium.Imprint.Visual.Tests" />
     <ProjectReference Include="../TheLithium.Imprint.Visual/TheLithium.Imprint.Visual.csproj" />
     <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <EmbeddedResource Include="Platforms/Ios/Foreground/Foreground.m" LogicalName="Imprint.Ios.Foreground.m" />
+    <EmbeddedResource Include="Platforms/Ios/Foreground/ImprintForeground.xcodeproj/project.pbxproj" LogicalName="Imprint.Ios.project.pbxproj" />
+    <EmbeddedResource Include="Platforms/Ios/Foreground/ImprintForeground.xcodeproj/xcshareddata/xcschemes/ImprintForeground.xcscheme" LogicalName="Imprint.Ios.ImprintForeground.xcscheme" />
   </ItemGroup>
 </Project>

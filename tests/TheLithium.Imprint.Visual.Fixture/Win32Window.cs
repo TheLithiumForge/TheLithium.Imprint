@@ -7,6 +7,7 @@ namespace TheLithium.Imprint.Visual.Fixture;
 internal static unsafe partial class Win32Window
 {
     private const uint OverlappedWindow = 0x00CF0000;
+    private const uint Topmost = 0x00000008;
     private const uint Visible = 0x10000000;
     private const uint Paint = 0x000F;
     private const uint Destroy = 0x0002;
@@ -63,7 +64,7 @@ internal static unsafe partial class Win32Window
         internal uint Private;
     }
 
-    internal static int Run(string title, (byte R, byte G, byte B) right)
+    internal static int Run(string title, (byte R, byte G, byte B) right, bool topmost)
     {
         SetProcessDpiAwarenessContext(-4);
         _leftBrush = CreateSolidBrush(Rgb(Program.Left));
@@ -86,7 +87,7 @@ internal static unsafe partial class Win32Window
 
             var area = new Rect { Right = Program.Width, Bottom = Program.Height };
             AdjustWindowRect(&area, OverlappedWindow, 0);
-            var window = CreateWindowExW(0, className, caption, OverlappedWindow | Visible, 100, 100,
+            var window = CreateWindowExW(topmost ? Topmost : 0, className, caption, OverlappedWindow | Visible, 100, 100,
                 area.Right - area.Left, area.Bottom - area.Top, 0, 0, windowClass.Instance, 0);
             if (window == 0)
             {

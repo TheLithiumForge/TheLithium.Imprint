@@ -12,27 +12,13 @@ internal static unsafe partial class WindowsNative
     internal const uint JobKillOnClose = 0x2000;
     internal const int JobExtendedLimitInformation = 9;
     internal const int ExtendedStyle = -20;
-    internal const long ToolWindow = 0x80;
+    internal const int ToolWindow = 0x80;
     internal const uint Owner = 4;
-    internal const uint Root = 2;
-    internal const int Restore = 9;
-    internal const uint NoSize = 0x1;
-    internal const uint NoMove = 0x2;
-    internal const uint NoActivate = 0x10;
-    internal const uint ShowWindowFlag = 0x40;
     internal const uint Close = 0x10;
     internal const uint ExtendedFrameBounds = 9;
     internal const uint Cloaked = 14;
-    internal const uint SourceCopy = 0x00CC0020;
-    internal const uint CaptureLayered = 0x40000000;
-    internal const int VirtualLeft = 76;
-    internal const int VirtualTop = 77;
-    internal const int VirtualWidth = 78;
-    internal const int VirtualHeight = 79;
     internal const uint SwitchDesktop = 0x100;
     internal const uint SnapshotProcesses = 0x2;
-    internal static readonly nint Topmost = -1;
-    internal static readonly nint NotTopmost = -2;
     internal static readonly nint PerMonitorAwareV2 = -4;
 
     [StructLayout(LayoutKind.Sequential)]
@@ -45,29 +31,6 @@ internal static unsafe partial class WindowsNative
 
         internal readonly int Width => Right - Left;
         internal readonly int Height => Bottom - Top;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct Point
-    {
-        internal int X;
-        internal int Y;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct BitmapInfoHeader
-    {
-        internal uint Size;
-        internal int Width;
-        internal int Height;
-        internal ushort Planes;
-        internal ushort BitCount;
-        internal uint Compression;
-        internal uint SizeImage;
-        internal int XPelsPerMeter;
-        internal int YPelsPerMeter;
-        internal uint ClrUsed;
-        internal uint ClrImportant;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -159,8 +122,8 @@ internal static unsafe partial class WindowsNative
     [LibraryImport("user32.dll")]
     internal static partial nint GetWindow(nint window, uint relation);
 
-    [LibraryImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
-    internal static partial nint GetWindowLongPtr(nint window, int index);
+    [LibraryImport("user32.dll", EntryPoint = "GetWindowLongW")]
+    internal static partial int GetWindowLong(nint window, int index);
 
     [LibraryImport("user32.dll", EntryPoint = "GetWindowTextLengthW")]
     internal static partial int GetWindowTextLength(nint window);
@@ -170,42 +133,11 @@ internal static unsafe partial class WindowsNative
 
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool ShowWindow(nint window, int command);
-
-    [LibraryImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool SetWindowPos(nint window, nint after, int x, int y, int width, int height, uint flags);
-
-    [LibraryImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool SetForegroundWindow(nint window);
+    internal static partial bool GetWindowDisplayAffinity(nint window, out uint affinity);
 
     [LibraryImport("user32.dll", EntryPoint = "PostMessageW")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool PostMessage(nint window, uint message, nint wParam, nint lParam);
-
-    [LibraryImport("user32.dll")]
-    internal static partial nint WindowFromPoint(Point point);
-
-    [LibraryImport("user32.dll")]
-    internal static partial nint GetAncestor(nint window, uint flags);
-
-    [LibraryImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool GetCursorPos(out Point point);
-
-    [LibraryImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool SetCursorPos(int x, int y);
-
-    [LibraryImport("user32.dll")]
-    internal static partial int GetSystemMetrics(int index);
-
-    [LibraryImport("user32.dll")]
-    internal static partial nint GetDC(nint window);
-
-    [LibraryImport("user32.dll")]
-    internal static partial int ReleaseDC(nint window, nint context);
 
     [LibraryImport("user32.dll", EntryPoint = "OpenInputDesktop")]
     internal static partial nint OpenInputDesktop(uint flags, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint access);
@@ -217,32 +149,33 @@ internal static unsafe partial class WindowsNative
     [LibraryImport("user32.dll")]
     internal static partial nint SetThreadDpiAwarenessContext(nint context);
 
-    [LibraryImport("gdi32.dll")]
-    internal static partial nint CreateCompatibleDC(nint context);
-
-    [LibraryImport("gdi32.dll")]
-    internal static partial nint CreateDIBSection(nint context, BitmapInfoHeader* info, uint usage, out nint bits, nint section, uint offset);
-
-    [LibraryImport("gdi32.dll")]
-    internal static partial nint SelectObject(nint context, nint item);
-
-    [LibraryImport("gdi32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool BitBlt(nint target, int x, int y, int width, int height, nint source, int sourceX, int sourceY, uint operation);
-
-    [LibraryImport("gdi32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool DeleteObject(nint item);
-
-    [LibraryImport("gdi32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool DeleteDC(nint context);
-
     [LibraryImport("dwmapi.dll")]
     internal static partial int DwmGetWindowAttribute(nint window, uint attribute, void* value, int size);
 
-    [LibraryImport("dwmapi.dll")]
-    internal static partial int DwmFlush();
+    [LibraryImport("combase.dll")]
+    private static partial int RoInitialize(uint type);
+
+    [LibraryImport("combase.dll")]
+    private static partial void RoUninitialize();
+
+    [LibraryImport("ole32.dll")]
+    internal static partial int CoIncrementMTAUsage(out nint cookie);
+
+    [LibraryImport("ole32.dll")]
+    internal static partial int CoDecrementMTAUsage(nint cookie);
+
+    internal static T InRuntime<T>(Func<T> action)
+    {
+        Marshal.ThrowExceptionForHR(RoInitialize(1)); // RO_INIT_MULTITHREADED on a worker thread.
+        try
+        {
+            return action();
+        }
+        finally
+        {
+            RoUninitialize();
+        }
+    }
 
     [LibraryImport("kernel32.dll", EntryPoint = "CreateProcessW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -264,6 +197,10 @@ internal static unsafe partial class WindowsNative
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool TerminateJobObject(nint job, uint exitCode);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool TerminateProcess(nint process, uint exitCode);
 
     [LibraryImport("kernel32.dll", SetLastError = true)]
     internal static partial uint ResumeThread(nint thread);

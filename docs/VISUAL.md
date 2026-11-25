@@ -73,9 +73,9 @@ __snapshots__/SettingsTests/Settings [platform=Windows]/settings.png
 __snapshots__/SettingsTests/Settings [platform=LinuxWayland]/settings.png
 ```
 
-`CaptureAsync` waits for the window to settle first, as [Stable capture](#stable-capture) describes. `DisposeAsync` stops the app and puts back anything the session changed.
+`CaptureAsync` waits for the window to settle first, as [Stable capture](#stable-capture) describes. `DisposeAsync` stops the app and releases its capture session.
 
-The capture is the whole window as the OS shows it, with its frame and title bar. On Android and iOS the app fills the screen, so the capture is the whole screen, with a fixed status bar.
+Desktop drivers capture the window, including its frame and title bar. Android and iOS capture the device display, including the system bars. Use a dedicated test device or simulator so notifications and other system overlays stay out of the image.
 
 ### Which window
 
@@ -93,9 +93,9 @@ Each platform has one target type and needs a few things on the machine that run
 
 | Platform | Target | The machine needs | Capture |
 | --- | --- | --- | --- |
-| `Windows` | `WindowsApp(exe)` | An unlocked desktop | The window's frame, copied from the composed desktop |
-| `LinuxX11` | `LinuxApp(executable)` | `Xvfb`, `openbox` and `libX11` | `XGetImage` on a display the capture starts for the app |
-| `LinuxWayland` | `LinuxApp(executable) { Display = LinuxDisplay.Wayland }` | `sway` and `grim` | `grim` on a headless sway the capture starts for the app |
+| `Windows` | `WindowsApp(exe)` | Windows 10 version 2004 or later, with an unlocked desktop and Windows Graphics Capture | The selected window, even when another window covers it |
+| `LinuxX11` | `LinuxApp(executable)` | Bash, `Xvfb`, `openbox` and `libX11` | `XGetImage` on a display the capture starts for the app |
+| `LinuxWayland` | `LinuxApp(executable) { Display = LinuxDisplay.Wayland }` | Bash, `sway` and `grim` | `grim` on a headless sway the capture starts for the app |
 | `MacOS` | `MacApp(path)` | Screen Recording for the process that runs the tests | `screencapture -l`, which captures a covered window too |
 | `Android` | `AndroidApp(package)` | `adb` and a running device or emulator | `adb exec-out screencap -p` |
 | `IOS` | `IosSimulatorApp(bundleId)` | macOS with Xcode and a booted simulator | `simctl io screenshot` |
@@ -103,6 +103,8 @@ Each platform has one target type and needs a few things on the machine that run
 Arguments reach the app the platform's own way: command-line arguments on the desktop and iOS, and intent extras on Android through `AndroidApp.Extras`.
 
 On Linux the app always runs on a display server of its own, never on the desktop you're logged in to. Its Xvfb accepts only clients with its random cookie, and its sway sockets sit in a folder only you can read.
+
+On Android and iOS, capture fails if the target leaves the foreground. The iOS driver starts an XCTest helper on the simulator to check the app before and after each screenshot.
 
 A missing prerequisite fails with what to install or enable, e.g. "Screen Recording isn't granted to the process that runs the tests. Enable it for your terminal or IDE in System Settings, Privacy and Security, Screen and System Audio Recording, then restart it."
 
@@ -131,7 +133,9 @@ A listed platform never skips, so set the variable in CI to the platforms each j
 | `MinimumDuration` | 500 ms | How long the frames have to stay identical. |
 | `Timeout` | 10 seconds | The longest wait. After it, the capture fails. |
 
-Frames compare exactly, so a blinking caret or an endless animation keeps the wait going. When the timeout ends it, the failure says how much the last two frames differed and keeps both frames with the failure artifacts. Stop animations for the test, or crop the changing area away with `CaptureOptions.Region`.
+Frames compare exactly. If only part of the window matters, set `CaptureOptions.Region`. Imprint crops every frame before comparing it, so a change outside the region doesn't restart the wait.
+
+On timeout, the failure artifacts contain up to the last two frames that arrived, cropped to the requested region. If the driver is still reading when capture times out, `DisposeAsync` waits for that read before releasing the session.
 
 `MatchingFrames = 1` with no minimum duration takes one frame without waiting.
 
@@ -207,12 +211,12 @@ Pixel tests are only as stable as the machine they run on:
 - Machines - baselines match the CI image they were made on. A local run on another OS version, GPU or display scale can fail against them, so update them from CI or in the same container image.
 - Fonts - bundle your app's fonts. System fallbacks differ between machines.
 - Time and live data - start the app with fixed data, e.g. through its arguments.
-- Mobile system bars - Android gets demo mode and no animations, and iOS gets a fixed status bar. Both are put back afterwards.
-- Pointer - the Windows capture moves the pointer off the window, so no hover effect shows. It moves it back when the session ends.
+- Mobile system bars - Android turns off animations. To fix the system bars, Imprint uses Android demo mode or an iOS status bar override. It keeps an existing demo session or override and restores the settings it changed when the test ends.
+- Pointer - Windows leaves the pointer where it is and excludes it from the image. If your UI draws a hover state, place the pointer outside the window before the test.
 
 ## Limits
 
-- Windows - the capture copies the screen, so the window has to be fully on screen and not covered. The capture brings it to the front. A locked or disconnected session can't be captured.
+- Windows - keep the target window open and restored. A minimized window or a locked or disconnected session can't be captured.
 - Linux - your own Wayland desktop can't be captured from outside without a prompt, which is why the app runs on its own display server. A window that draws its own title bar, such as GTK's, looks the same there. Other windows get Openbox's frame on X11 and sway's on Wayland.
 - macOS - Screen Recording is needed for the terminal, IDE or CI agent that runs the tests. GitHub's macOS runner images grant it. macOS 15 might ask again from time to time on your own machine.
 - iOS - only the simulator is supported. A physical device needs signing and pairing.

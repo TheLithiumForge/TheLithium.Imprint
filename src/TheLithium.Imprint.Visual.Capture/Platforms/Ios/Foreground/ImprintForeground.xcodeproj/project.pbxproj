@@ -1,0 +1,130 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		130000000000000000000001 /* Foreground.m in Sources */ = {
+			isa = PBXBuildFile;
+			fileRef = 120000000000000000000001 /* Foreground.m */;
+		};
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		120000000000000000000001 /* Foreground.m */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.c.objc;
+			path = Foreground.m;
+			sourceTree = "<group>";
+		};
+		120000000000000000000002 /* ImprintForeground.xctest */ = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			path = ImprintForeground.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		110000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				120000000000000000000001 /* Foreground.m */,
+				110000000000000000000002 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		110000000000000000000002 /* Products */ = {
+			isa = PBXGroup;
+			children = (120000000000000000000002 /* ImprintForeground.xctest */);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		150000000000000000000001 /* ImprintForeground */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 170000000000000000000002 /* Target configurations */;
+			buildPhases = (140000000000000000000001 /* Sources */);
+			buildRules = ();
+			dependencies = ();
+			name = ImprintForeground;
+			productName = ImprintForeground;
+			productReference = 120000000000000000000002 /* ImprintForeground.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		100000000000000000000001 /* Project */ = {
+			isa = PBXProject;
+			buildConfigurationList = 170000000000000000000001 /* Project configurations */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base);
+			mainGroup = 110000000000000000000001;
+			productRefGroup = 110000000000000000000002 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (150000000000000000000001 /* ImprintForeground */);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		140000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (130000000000000000000001 /* Foreground.m in Sources */);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		160000000000000000000001 /* Project Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				SDKROOT = iphonesimulator;
+				SUPPORTED_PLATFORMS = iphonesimulator;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		160000000000000000000002 /* Target Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks");
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = ("$(inherited)", "-framework", XCTest);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.thelithium.imprint.foreground;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		170000000000000000000001 /* Project configurations */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (160000000000000000000001 /* Project Debug */);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		170000000000000000000002 /* Target configurations */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (160000000000000000000002 /* Target Debug */);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 100000000000000000000001 /* Project */;
+}

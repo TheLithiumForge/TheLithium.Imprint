@@ -21,31 +21,35 @@ internal static class PortableNames
             throw new SnapshotConfigurationException("Snapshot names cannot be empty or whitespace.");
         }
 
-        var original = value;
-        var safe = Map(value).TrimEnd(' ', '.');
-        if (safe is "" or "." or "..")
-        {
-            safe = "snapshot";
-        }
-
-        var dot = safe.IndexOf('.');
-        var deviceName = dot < 0 ? safe : safe[..dot];
-        if (Devices.Contains(deviceName))
-        {
-            safe = $"_{safe}";
-        }
-
+        var safe = FileName(value);
         if (safe.Length > MaximumSegmentLength)
         {
             var length = char.IsHighSurrogate(safe[MaximumSegmentLength - 1]) ? MaximumSegmentLength - 1 : MaximumSegmentLength;
             safe = safe[..length];
         }
-        if (!string.Equals(safe, original, StringComparison.Ordinal))
+        if (!string.Equals(safe, value, StringComparison.Ordinal))
         {
-            safe = $"{safe}~{Hash(original)[..HashSuffixLength]}";
+            safe = $"{safe}~{Hash(value)[..HashSuffixLength]}";
         }
 
         return safe;
+    }
+
+    /// <summary>Checks a complete file name, including suffixes added after shortening the snapshot name.</summary>
+    internal static bool IsFileName(string value)
+        => !string.IsNullOrWhiteSpace(value) && FileName(value) == value;
+
+    private static string FileName(string value)
+    {
+        var safe = Map(value).TrimEnd(' ', '.');
+        if (safe.Length == 0)
+        {
+            return "snapshot";
+        }
+
+        var dot = safe.IndexOf('.');
+        var deviceName = dot < 0 ? safe : safe[..dot];
+        return Devices.Contains(deviceName) ? $"_{safe}" : safe;
     }
 
     /// <summary>Normalizes and replaces characters no file system accepts. A segment starts with this text unless it was truncated.</summary>

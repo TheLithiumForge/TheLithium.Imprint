@@ -71,7 +71,7 @@ internal static class SnapshotArtifacts
 
     private static void WriteBytes(string directory, string fileName, byte[] content)
     {
-        if (fileName != Path.GetFileName(fileName) || PortableNames.Segment(fileName) != fileName)
+        if (!PortableNames.IsFileName(fileName))
         {
             throw new SnapshotException($"Invalid failure artifact name: {fileName}");
         }

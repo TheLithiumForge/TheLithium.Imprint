@@ -10,7 +10,7 @@ namespace TheLithium.Imprint.Visual.Platforms.Windows;
 
 /// <summary>
 /// Starts an executable suspended inside a job that dies with the test process, finds its window among the process
-/// tree's top-level windows, and copies that window's area of the composed desktop, frame included.
+/// tree's top-level windows, and captures that window using Windows Graphics Capture.
 /// </summary>
 internal sealed class WindowsDriver : IPlatformDriver
 {
@@ -24,7 +24,7 @@ internal sealed class WindowsDriver : IPlatformDriver
         {
             return Task.FromResult<string?>($"The app {app.Executable} doesn't exist.");
         }
-        return Task.FromResult(DesktopProblem());
+        return Task.Run(DesktopProblem, cancellationToken);
     }
 
     public async Task<IPlatformSession> StartAsync(LaunchPlan plan, SessionSettings settings, CancellationToken cancellationToken)
@@ -54,7 +54,7 @@ internal sealed class WindowsDriver : IPlatformDriver
         {
             throw new SnapshotCaptureException("Windows apps need a Windows test machine.");
         }
-        if (DesktopProblem() is { } problem)
+        if (await Task.Run(DesktopProblem, cancellationToken).ConfigureAwait(false) is { } problem)
         {
             throw new SnapshotCaptureException(problem);
         }
@@ -67,36 +67,116 @@ internal sealed class WindowsDriver : IPlatformDriver
     [SupportedOSPlatform("windows")]
     private static string? DesktopProblem()
     {
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041))
+        {
+            return "Window capture needs Windows 10 version 2004 or newer.";
+        }
         var desktop = OpenInputDesktop(0, false, SwitchDesktop);
         if (desktop == 0)
         {
             return "There's no unlocked desktop to capture. Run the tests in a signed-in, unlocked session.";
         }
         CloseDesktop(desktop);
-        return null;
+        try
+        {
+            return InRuntime(WindowsCaptureItem.IsSupported) ? null : "Windows Graphics Capture isn't available in this desktop session.";
+        }
+        catch (SnapshotCaptureException error)
+        {
+            return error.Message;
+        }
     }
 }
 
 [SupportedOSPlatform("windows")]
 internal sealed class WindowsSession(int processId, WindowsLaunch? launch, SessionSettings settings) : IPlatformSession
 {
-    private nint _window;
-    private Point? _cursor;
+    private WindowsCaptureDevice? _device;
+    private WindowsCaptureItem? _item;
+    private WindowInfo? _target;
+    private RgbaImage? _latest;
+    private nint _mta;
     private int _disposed;
 
     internal async Task WaitForWindowAsync(CancellationToken cancellationToken)
-        => _window = await FindWindowAsync(cancellationToken).ConfigureAwait(false);
+        => _ = await FindWindowAsync(cancellationToken).ConfigureAwait(false);
 
-    public async Task<RgbaImage> CaptureAsync(CancellationToken cancellationToken)
+    public async Task<RgbaImage> CaptureAsync(int maxPixels, CancellationToken cancellationToken)
     {
-        if (!IsWindowVisible(_window))
+        var window = await FindWindowAsync(cancellationToken).ConfigureAwait(false);
+        return await Task.Run(() => InRuntime(() => ReadFrame(window, maxPixels, cancellationToken)), cancellationToken).ConfigureAwait(false);
+    }
+
+    private RgbaImage ReadFrame(WindowInfo window, int maxPixels, CancellationToken cancellationToken)
+    {
+        if (_mta == 0)
         {
-            // The window was replaced, e.g. a splash screen closed. Find the app's window again.
-            _window = await FindWindowAsync(cancellationToken).ConfigureAwait(false);
+            // The capture pool lives across samples, which can run on different thread-pool threads.
+            Marshal.ThrowExceptionForHR(CoIncrementMTAUsage(out _mta));
+        }
+        _device ??= WindowsCaptureDevice.Create();
+        if (_target?.Handle != window.Handle || _target.ProcessId != window.ProcessId)
+        {
+            ResetItem();
+            _target = window;
         }
 
-        await using var desktop = await MachineLock.AcquireAsync("windows-desktop", TimeSpan.FromSeconds(60), cancellationToken).ConfigureAwait(false);
-        return await Task.Run(Copy, cancellationToken).ConfigureAwait(false);
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            EnsureCapturable(window);
+            _item ??= WindowsCaptureItem.Open(window.Handle, _device.Device, maxPixels);
+            if ((long)_item.PoolWidth * _item.PoolHeight > maxPixels)
+            {
+                throw new SnapshotCaptureException($"The window is {_item.PoolWidth}x{_item.PoolHeight}, more than the {maxPixels}-pixel limit.");
+            }
+
+            bool resized;
+            using (var frame = _item.TakeLatestFrame())
+            {
+                resized = frame is not null && (frame.Width != _item.PoolWidth || frame.Height != _item.PoolHeight);
+                if (frame is not null && !resized)
+                {
+                    _latest = _device.Read(frame.Texture, frame.Width, frame.Height, maxPixels, cancellationToken);
+                }
+            }
+            if (resized)
+            {
+                // The compositor clips a resized window to the old pool. Release its frame before closing it.
+                ResetItem();
+                continue;
+            }
+            if (_latest is not null)
+            {
+                // A stationary window doesn't have to produce another compositor frame.
+                EnsureCapturable(window);
+                return _latest;
+            }
+            cancellationToken.WaitHandle.WaitOne(10);
+        }
+    }
+
+    private static void EnsureCapturable(WindowInfo window)
+    {
+        if (GetWindowThreadProcessId(window.Handle, out var pid) == 0 || pid != window.ProcessId || !IsWindowVisible(window.Handle))
+        {
+            throw new SnapshotCaptureException("The selected window closed before its frame could be captured.");
+        }
+        if (IsIconic(window.Handle))
+        {
+            throw new SnapshotCaptureException("The selected window is minimized. Restore it before capturing.");
+        }
+        if (GetWindowDisplayAffinity(window.Handle, out var affinity) && affinity != 0)
+        {
+            throw new SnapshotCaptureException("The selected window has disabled screen capture.");
+        }
+    }
+
+    private void ResetItem()
+    {
+        _item?.Dispose();
+        _item = null;
+        _latest = null;
     }
 
     public async ValueTask DisposeAsync()
@@ -106,25 +186,37 @@ internal sealed class WindowsSession(int processId, WindowsLaunch? launch, Sessi
             return;
         }
 
-        if (_cursor is { } cursor)
+        try
         {
-            SetCursorPos(cursor.X, cursor.Y);
+            if (_mta != 0)
+            {
+                await Task.Run(() => InRuntime(() =>
+                {
+                    ResetItem();
+                    _device?.Dispose();
+                    CoDecrementMTAUsage(_mta);
+                    return true;
+                })).ConfigureAwait(false);
+            }
         }
-        if (launch is not null)
+        finally
         {
-            await launch.StopAsync().ConfigureAwait(false);
+            if (launch is not null)
+            {
+                await launch.StopAsync().ConfigureAwait(false);
+            }
         }
     }
 
-    private async Task<nint> FindWindowAsync(CancellationToken cancellationToken)
-        => (await PlatformDrivers.WaitForAsync<Box>(async token =>
+    private async Task<WindowInfo> FindWindowAsync(CancellationToken cancellationToken)
+        => await PlatformDrivers.WaitForAsync<WindowInfo>(async token =>
         {
             var tree = await ProcessTree.OfAsync(processId, token).ConfigureAwait(false);
-            var windows = TopLevelWindows().Where(window => tree.Contains(window.ProcessId)).ToList();
+            var windows = TopLevelWindows(tree);
             var matching = windows.Where(window => settings.Window?.Matches(window.Title) ?? true).ToList();
             if (matching.Count == 1)
             {
-                return (new Box(matching[0].Handle), "");
+                return (matching[0], "");
             }
 
             var problem = PlatformDrivers.WindowProblem(matching.Select(window => window.Describe()).ToList(), settings.Window, settings.StartTimeout);
@@ -133,10 +225,10 @@ internal sealed class WindowsSession(int processId, WindowsLaunch? launch, Sessi
                 problem += $" The app exited with code {code}.";
             }
             return (null, problem);
-        }, settings.StartTimeout, cancellationToken).ConfigureAwait(false)).Handle;
+        }, settings.StartTimeout, cancellationToken).ConfigureAwait(false);
 
     /// <summary>Visible, unowned, uncloaked top-level windows that aren't tool windows, with a frame of some size.</summary>
-    private static unsafe List<WindowInfo> TopLevelWindows()
+    private static unsafe List<WindowInfo> TopLevelWindows(IReadOnlySet<int> tree)
     {
         var handles = new List<nint>();
         var state = GCHandle.Alloc(handles);
@@ -152,7 +244,8 @@ internal sealed class WindowsSession(int processId, WindowsLaunch? launch, Sessi
         var windows = new List<WindowInfo>();
         foreach (var handle in handles)
         {
-            if (!IsWindowVisible(handle) || GetWindow(handle, Owner) != 0 || (GetWindowLongPtr(handle, ExtendedStyle) & (nint)ToolWindow) != 0)
+            GetWindowThreadProcessId(handle, out var owner);
+            if (!tree.Contains((int)owner) || !IsWindowVisible(handle) || GetWindow(handle, Owner) != 0 || (GetWindowLong(handle, ExtendedStyle) & ToolWindow) != 0)
             {
                 continue;
             }
@@ -169,7 +262,6 @@ internal sealed class WindowsSession(int processId, WindowsLaunch? launch, Sessi
                 continue;
             }
 
-            GetWindowThreadProcessId(handle, out var owner);
             windows.Add(new(handle, (int)owner, Title(handle), bounds));
         }
         return windows;
@@ -201,148 +293,10 @@ internal sealed class WindowsSession(int processId, WindowsLaunch? launch, Sessi
         }
     }
 
-    /// <summary>Raises the window, moves the pointer off it, and copies its frame from the composed desktop.</summary>
-    private unsafe RgbaImage Copy()
-    {
-        var previous = SetThreadDpiAwarenessContext(PerMonitorAwareV2);
-        try
-        {
-            if (IsIconic(_window))
-            {
-                ShowWindow(_window, Restore);
-            }
-            SetWindowPos(_window, Topmost, 0, 0, 0, 0, NoMove | NoSize | NoActivate | ShowWindowFlag);
-            SetForegroundWindow(_window);
-            try
-            {
-                Rect bounds = default;
-                DwmGetWindowAttribute(_window, ExtendedFrameBounds, &bounds, sizeof(Rect));
-                MovePointerAway(bounds);
-                DwmFlush();
-                Thread.Sleep(50);
-                DwmFlush();
-                DwmGetWindowAttribute(_window, ExtendedFrameBounds, &bounds, sizeof(Rect));
-                EnsureOnScreen(bounds);
-                EnsureUncovered(bounds);
-                return CopyScreen(bounds);
-            }
-            finally
-            {
-                SetWindowPos(_window, NotTopmost, 0, 0, 0, 0, NoMove | NoSize | NoActivate);
-            }
-        }
-        finally
-        {
-            SetThreadDpiAwarenessContext(previous);
-        }
-    }
-
-    private void MovePointerAway(Rect bounds)
-    {
-        if (!GetCursorPos(out var cursor))
-        {
-            return;
-        }
-
-        _cursor ??= cursor;
-        if (cursor.X < bounds.Left || cursor.X >= bounds.Right || cursor.Y < bounds.Top || cursor.Y >= bounds.Bottom)
-        {
-            return;
-        }
-
-        // A corner of the virtual screen outside the window keeps hover effects out of the capture.
-        var left = GetSystemMetrics(VirtualLeft);
-        var top = GetSystemMetrics(VirtualTop);
-        var right = left + GetSystemMetrics(VirtualWidth) - 1;
-        var bottom = top + GetSystemMetrics(VirtualHeight) - 1;
-        var x = bounds.Left > left ? left : right;
-        var y = bounds.Top > top ? top : bottom;
-        SetCursorPos(x, y);
-    }
-
-    private static void EnsureOnScreen(Rect bounds)
-    {
-        var left = GetSystemMetrics(VirtualLeft);
-        var top = GetSystemMetrics(VirtualTop);
-        if (bounds.Left < left || bounds.Top < top
-            || bounds.Right > left + GetSystemMetrics(VirtualWidth) || bounds.Bottom > top + GetSystemMetrics(VirtualHeight))
-        {
-            throw new SnapshotCaptureException(
-                $"The window at {bounds.Left},{bounds.Top} to {bounds.Right},{bounds.Bottom} is partly off screen, so its pixels can't be copied. Place it fully on a monitor.");
-        }
-    }
-
-    private void EnsureUncovered(Rect bounds)
-    {
-        var inset = Math.Min(4, Math.Min(bounds.Width, bounds.Height) / 2);
-        Span<Point> probes =
-        [
-            new() { X = bounds.Left + bounds.Width / 2, Y = bounds.Top + bounds.Height / 2 },
-            new() { X = bounds.Left + inset, Y = bounds.Top + inset },
-            new() { X = bounds.Right - 1 - inset, Y = bounds.Top + inset },
-            new() { X = bounds.Left + inset, Y = bounds.Bottom - 1 - inset },
-            new() { X = bounds.Right - 1 - inset, Y = bounds.Bottom - 1 - inset }
-        ];
-        foreach (var probe in probes)
-        {
-            var hit = GetAncestor(WindowFromPoint(probe), Root);
-            if (hit != 0 && hit != _window)
-            {
-                throw new SnapshotCaptureException($"Another window covers the app at {probe.X},{probe.Y}: \"{Title(hit)}\". Close it, or run the tests on a clear desktop.");
-            }
-        }
-    }
-
-    private static unsafe RgbaImage CopyScreen(Rect bounds)
-    {
-        var width = bounds.Width;
-        var height = bounds.Height;
-        var screen = GetDC(0);
-        var memory = CreateCompatibleDC(screen);
-        var header = new BitmapInfoHeader
-        {
-            Size = (uint)sizeof(BitmapInfoHeader),
-            Width = width,
-            Height = -height,
-            Planes = 1,
-            BitCount = 32
-        };
-        var bitmap = CreateDIBSection(screen, &header, 0, out var bits, 0, 0);
-        try
-        {
-            if (bitmap == 0 || bits == 0)
-            {
-                throw new SnapshotCaptureException("Windows couldn't create a bitmap for the capture.");
-            }
-
-            var old = SelectObject(memory, bitmap);
-            var copied = BitBlt(memory, 0, 0, width, height, screen, bounds.Left, bounds.Top, SourceCopy | CaptureLayered);
-            SelectObject(memory, old);
-            if (!copied)
-            {
-                throw new SnapshotCaptureException("Windows couldn't copy the window's pixels from the desktop.");
-            }
-
-            var stride = width * 4;
-            return RgbaImage.FromBgra(width, height, new ReadOnlySpan<byte>((void*)bits, stride * height), stride, opaque: true);
-        }
-        finally
-        {
-            if (bitmap != 0)
-            {
-                DeleteObject(bitmap);
-            }
-            DeleteDC(memory);
-            ReleaseDC(0, screen);
-        }
-    }
-
     private sealed record WindowInfo(nint Handle, int ProcessId, string Title, Rect Bounds)
     {
         internal string Describe() => $"\"{Title}\", process {ProcessId}, {Bounds.Width}x{Bounds.Height} at {Bounds.Left},{Bounds.Top}";
     }
-
-    private sealed record Box(nint Handle);
 }
 
 /// <summary>
@@ -401,13 +355,17 @@ internal sealed class WindowsLaunch
                 {
                     throw new SnapshotCaptureException($"Windows couldn't put the app in its job object: error {Marshal.GetLastPInvokeError()}.");
                 }
+                if (ResumeThread(information.Thread) == uint.MaxValue)
+                {
+                    throw new SnapshotCaptureException($"Windows couldn't resume the app: error {Marshal.GetLastPInvokeError()}.");
+                }
                 var process = Process.GetProcessById((int)information.ProcessId);
-                ResumeThread(information.Thread);
                 return new(job, process);
             }
             catch
             {
-                TerminateJobObject(job, 1);
+                // Assignment can fail while the new process is still suspended outside the job.
+                TerminateProcess(information.Process, 1);
                 throw;
             }
             finally

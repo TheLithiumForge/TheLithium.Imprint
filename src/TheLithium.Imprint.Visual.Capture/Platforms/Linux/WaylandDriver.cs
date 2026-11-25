@@ -1,5 +1,4 @@
 using System.Globalization;
-using TheLithium.Imprint.Configuration;
 using System.Runtime.Versioning;
 using System.Text.Json;
 using TheLithium.Imprint.Visual.Sources;
@@ -15,13 +14,9 @@ internal sealed class WaylandDriver : IPlatformDriver
 {
     public Task<string?> FindProblemAsync(AppTarget target, CancellationToken cancellationToken)
     {
-        if (!OperatingSystem.IsLinux())
+        if (LinuxEnvironment.FindProblem(target) is { } problem)
         {
-            return Task.FromResult<string?>("Linux apps need a Linux test machine.");
-        }
-        if (target is LinuxApp app && !File.Exists(app.Executable))
-        {
-            return Task.FromResult<string?>($"The app {app.Executable} doesn't exist.");
+            return Task.FromResult<string?>(problem);
         }
         foreach (var tool in new[] { "sway", "swaymsg", "grim" })
         {
@@ -82,8 +77,8 @@ internal sealed class WaylandDriver : IPlatformDriver
 [SupportedOSPlatform("linux")]
 internal sealed class SwayCompositor : IAsyncDisposable
 {
-    private const string Config = """
-        output HEADLESS-1 resolution 1920x1080 position 0 0 scale 1
+    private static readonly string Config = $"""
+        output HEADLESS-1 resolution {LinuxEnvironment.Width}x{LinuxEnvironment.Height} position 0 0 scale 1
         default_border normal 1
         default_floating_border normal 1
         font pango:monospace 10
@@ -126,22 +121,22 @@ internal sealed class SwayCompositor : IAsyncDisposable
         var runtime = Path.Combine("/tmp", "imprint-wl-" + Guid.NewGuid().ToString("N")[..12]);
         // Only this user can reach the compositor's sockets in it.
         Directory.CreateDirectory(runtime, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        var config = Path.Combine(runtime, "sway.config");
-        await File.WriteAllTextAsync(config, Config, cancellationToken).ConfigureAwait(false);
-        var sway = OwnedProcess.Start(ToolLocator.Find("sway") ?? "sway", ["--config", config], new Dictionary<string, string?>
-        {
-            ["XDG_RUNTIME_DIR"] = runtime,
-            ["WLR_BACKENDS"] = "headless",
-            ["WLR_HEADLESS_OUTPUTS"] = "1",
-            ["WLR_LIBINPUT_NO_DEVICES"] = "1",
-            ["WLR_RENDERER"] = "pixman",
-            ["WAYLAND_DISPLAY"] = null,
-            ["DISPLAY"] = null,
-            ["SWAYSOCK"] = null
-        }, null);
-
+        OwnedProcess? sway = null;
         try
         {
+            var config = Path.Combine(runtime, "sway.config");
+            await File.WriteAllTextAsync(config, Config, cancellationToken).ConfigureAwait(false);
+            sway = OwnedProcess.Start(ToolLocator.Find("sway") ?? "sway", ["--config", config], new Dictionary<string, string?>
+            {
+                ["XDG_RUNTIME_DIR"] = runtime,
+                ["WLR_BACKENDS"] = "headless",
+                ["WLR_HEADLESS_OUTPUTS"] = "1",
+                ["WLR_LIBINPUT_NO_DEVICES"] = "1",
+                ["WLR_RENDERER"] = "pixman",
+                ["WAYLAND_DISPLAY"] = null,
+                ["DISPLAY"] = null,
+                ["SWAYSOCK"] = null
+            }, null);
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
             while (true)
             {
@@ -167,8 +162,17 @@ internal sealed class SwayCompositor : IAsyncDisposable
         }
         catch
         {
-            await sway.DisposeAsync().ConfigureAwait(false);
-            Delete(runtime);
+            try
+            {
+                if (sway is not null)
+                {
+                    await sway.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                Delete(runtime);
+            }
             throw;
         }
     }
@@ -189,8 +193,14 @@ internal sealed class SwayCompositor : IAsyncDisposable
             return;
         }
 
-        await _sway.DisposeAsync().ConfigureAwait(false);
-        Delete(RuntimeDirectory);
+        try
+        {
+            await _sway.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            Delete(RuntimeDirectory);
+        }
     }
 
     private static void Delete(string directory)
@@ -208,21 +218,28 @@ internal sealed class SwayCompositor : IAsyncDisposable
 internal sealed class WaylandSession(SwayCompositor compositor, OwnedProcess process, SessionSettings settings) : IPlatformSession
 {
     private const int MaxPng = 64 * 1024 * 1024;
-    private int _windowProcess;
+    private int _windowId;
     private int _disposed;
 
     internal async Task WaitForWindowAsync(CancellationToken cancellationToken)
-        => _windowProcess = (await FindAsync(cancellationToken).ConfigureAwait(false)).ProcessId;
+        => _windowId = (await FindAsync(cancellationToken).ConfigureAwait(false)).Id;
 
-    public async Task<RgbaImage> CaptureAsync(CancellationToken cancellationToken)
+    public async Task<RgbaImage> CaptureAsync(int maxPixels, CancellationToken cancellationToken)
     {
-        var window = await FindAsync(cancellationToken).ConfigureAwait(false);
-        await compositor.MessageAsync([string.Create(CultureInfo.InvariantCulture, $"[pid={window.ProcessId}] focus")], cancellationToken).ConfigureAwait(false);
-        var geometry = string.Create(CultureInfo.InvariantCulture, $"{window.X},{window.Y} {window.Width}x{window.Height}");
+        var focus = string.Create(CultureInfo.InvariantCulture, $"[con_id={_windowId}] focus");
+        (await compositor.MessageAsync([focus], cancellationToken).ConfigureAwait(false)).EnsureSuccess("swaymsg", [focus]);
+        var window = await SelectedWindowAsync(cancellationToken).ConfigureAwait(false);
+        var bounds = window.Bounds;
+        LinuxEnvironment.CheckBounds(bounds, maxPixels);
+        var geometry = string.Create(CultureInfo.InvariantCulture, $"{bounds.X},{bounds.Y} {bounds.Width}x{bounds.Height}");
         var run = new ToolRun(TimeSpan.FromSeconds(20), MaxPng, compositor.ClientEnvironment);
         var result = await ToolProcess.RunAsync(ToolLocator.Find("grim") ?? "grim", ["-s", "1", "-t", "png", "-g", geometry, "-"], run, cancellationToken).ConfigureAwait(false);
         result.EnsureSuccess("grim", ["-g", geometry]);
-        return RgbaImage.FromPng(result.Output, SnapshotLimits.MaximumImagePixels);
+        if ((await SelectedWindowAsync(cancellationToken).ConfigureAwait(false)).Bounds != bounds)
+        {
+            throw new SnapshotCaptureException("The selected Wayland window moved or resized during the capture.");
+        }
+        return RgbaImage.FromPng(result.Output, maxPixels);
     }
 
     public async ValueTask DisposeAsync()
@@ -231,25 +248,22 @@ internal sealed class WaylandSession(SwayCompositor compositor, OwnedProcess pro
         {
             return;
         }
-        await process.DisposeAsync().ConfigureAwait(false);
-        await compositor.DisposeAsync().ConfigureAwait(false);
+        try
+        {
+            await process.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            await compositor.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     private async Task<SwayWindow> FindAsync(CancellationToken cancellationToken)
         => await PlatformDrivers.WaitForAsync<SwayWindow>(async token =>
         {
-            var tree = await ProcessTree.OfAsync(process.Id, token).ConfigureAwait(false);
-            var result = await compositor.MessageAsync(["-t", "get_tree", "-r"], token).ConfigureAwait(false);
-            result.EnsureSuccess("swaymsg", ["-t", "get_tree"]);
-            using var document = JsonDocument.Parse(result.Output);
-            var windows = new List<SwayWindow>();
-            Collect(document.RootElement, tree, windows);
-            var matching = windows.Where(window => settings.Window?.Matches(window.Title) ?? true).ToList();
-            if (_windowProcess != 0)
-            {
-                // Once found, keep capturing the same app's window even if another one of its processes shows one.
-                matching = matching.Where(window => window.ProcessId == _windowProcess).ToList();
-            }
+            var tree = await process.MembersAsync(token).ConfigureAwait(false);
+            var windows = await WindowsAsync(token).ConfigureAwait(false);
+            var matching = windows.Where(window => tree.Contains(window.ProcessId) && (settings.Window?.Matches(window.Title) ?? true)).ToList();
             if (matching.Count == 1)
             {
                 return (matching[0], "");
@@ -263,17 +277,45 @@ internal sealed class WaylandSession(SwayCompositor compositor, OwnedProcess pro
             return (null, problem);
         }, settings.StartTimeout, cancellationToken).ConfigureAwait(false);
 
-    /// <summary>Visible windows of the app's process tree, from both tiled and floating nodes.</summary>
-    private static void Collect(JsonElement node, IReadOnlySet<int> tree, List<SwayWindow> windows)
+    private async Task<SwayWindow> SelectedWindowAsync(CancellationToken cancellationToken)
     {
-        if (node.TryGetProperty("pid", out var pid) && pid.ValueKind == JsonValueKind.Number && tree.Contains(pid.GetInt32())
+        var windows = await WindowsAsync(cancellationToken).ConfigureAwait(false);
+        var matching = windows.Where(window => settings.Window?.Matches(window.Title) ?? true).ToList();
+        if (matching.Count > 1)
+        {
+            var tree = await process.MembersAsync(cancellationToken).ConfigureAwait(false);
+            matching.RemoveAll(window => !tree.Contains(window.ProcessId));
+            if (matching.Count > 1)
+            {
+                throw new SnapshotCaptureException(PlatformDrivers.WindowProblem(matching.Select(window => window.Describe()).ToList(), settings.Window, settings.StartTimeout));
+            }
+        }
+        return matching.Find(window => window.Id == _windowId && window.Focused)
+            ?? throw new SnapshotCaptureException("The selected Wayland window closed, no longer matched the selector or lost focus during the capture.");
+    }
+
+    private async Task<List<SwayWindow>> WindowsAsync(CancellationToken cancellationToken)
+    {
+        var result = await compositor.MessageAsync(["-t", "get_tree", "-r"], cancellationToken).ConfigureAwait(false);
+        result.EnsureSuccess("swaymsg", ["-t", "get_tree"]);
+        using var document = JsonDocument.Parse(result.Output);
+        var windows = new List<SwayWindow>();
+        Collect(document.RootElement, windows);
+        return windows;
+    }
+
+    /// <summary>The private compositor's visible windows, including tiled and floating nodes.</summary>
+    private static void Collect(JsonElement node, List<SwayWindow> windows)
+    {
+        if (node.TryGetProperty("pid", out var pid) && pid.ValueKind == JsonValueKind.Number
             && node.TryGetProperty("visible", out var visible) && visible.ValueKind == JsonValueKind.True)
         {
             var rect = node.GetProperty("rect");
             var decoration = node.TryGetProperty("deco_rect", out var deco) ? deco.GetProperty("height").GetInt32() : 0;
             var title = node.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String ? name.GetString() ?? "" : "";
-            windows.Add(new(pid.GetInt32(), title, rect.GetProperty("x").GetInt32(), rect.GetProperty("y").GetInt32() - decoration,
-                rect.GetProperty("width").GetInt32(), rect.GetProperty("height").GetInt32() + decoration));
+            var bounds = new PixelRect(rect.GetProperty("x").GetInt32(), rect.GetProperty("y").GetInt32() - decoration,
+                rect.GetProperty("width").GetInt32(), rect.GetProperty("height").GetInt32() + decoration);
+            windows.Add(new(node.GetProperty("id").GetInt32(), pid.GetInt32(), title, bounds, node.GetProperty("focused").GetBoolean()));
         }
 
         foreach (var children in new[] { "nodes", "floating_nodes" })
@@ -282,14 +324,14 @@ internal sealed class WaylandSession(SwayCompositor compositor, OwnedProcess pro
             {
                 foreach (var child in list.EnumerateArray())
                 {
-                    Collect(child, tree, windows);
+                    Collect(child, windows);
                 }
             }
         }
     }
 
-    private sealed record SwayWindow(int ProcessId, string Title, int X, int Y, int Width, int Height)
+    private sealed record SwayWindow(int Id, int ProcessId, string Title, PixelRect Bounds, bool Focused)
     {
-        internal string Describe() => $"\"{Title}\", process {ProcessId}, {Width}x{Height} at {X},{Y}";
+        internal string Describe() => $"\"{Title}\", process {ProcessId}, {Bounds.Width}x{Bounds.Height} at {Bounds.X},{Bounds.Y}";
     }
 }

@@ -15,12 +15,12 @@ public static class ImageSnapshotExtensions
     [SnapshotCaptureMethod]
     public static void AssertImage(this RgbaImage image, string? name = null, ImageSnapshotOptions? options = null,
         [CallerArgumentExpression(nameof(image))] string? expression = null)
-        => ImageAssertion.Stage(image, new(name, expression, options, Update: null));
+        => Snapshots.Current.CaptureBinary(settings => ImageAssertion.Encode(image, new(name, expression, options, Update: null), settings.Visual));
 
     /// <summary>Stages this image for creation or replacement after the test body succeeds.</summary>
     /// <remarks>A run-wide verify, or CI, still prevents writes. Change back to AssertImage after reviewing the update.</remarks>
     [SnapshotCaptureMethod]
     public static void UpdateImage(this RgbaImage image, string? name = null, ImageSnapshotOptions? options = null,
         [CallerArgumentExpression(nameof(image))] string? expression = null)
-        => ImageAssertion.Stage(image, new(name, expression, options, SnapshotUpdate.All));
+        => Snapshots.Current.CaptureBinary(settings => ImageAssertion.Encode(image, new(name, expression, options, SnapshotUpdate.All), settings.Visual));
 }
