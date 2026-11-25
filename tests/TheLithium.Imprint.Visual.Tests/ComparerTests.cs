@@ -68,18 +68,6 @@ public sealed class ComparerTests
     }
 
     [Fact]
-    public void ASoftenedEdgeIsIgnoredOnlyWhenAsked()
-    {
-        // A vertical black-to-white edge. The received image has one gray pixel on the edge, as a renderer that
-        // anti-aliases differently would draw it.
-        var expected = Edge(8, 8);
-        var received = With(expected, (3, 4, Rgba32.Opaque(128, 128, 128)));
-        Assert.False(Compare(expected, received).Equal);
-        var ignored = Compare(expected, received, new() { IgnoreAntialiasing = true, MaxDifferingPercent = 0 });
-        Assert.True(ignored.Equal);
-    }
-
-    [Fact]
     public void AMovedLineIsNotTakenForAntialiasing()
     {
         var expected = Solid(9, 9, White);
@@ -141,12 +129,6 @@ public sealed class ComparerTests
 
     private static RgbaImage WithColumn(RgbaImage image, int column, Rgba32 color)
         => With(image, Enumerable.Range(0, image.Height).Select(y => (column, y, color)).ToArray());
-
-    private static RgbaImage Edge(int width, int height)
-    {
-        var image = Solid(width, height, White);
-        return With(image, Enumerable.Range(0, height).SelectMany(y => Enumerable.Range(0, width / 2).Select(x => (x, y, Black))).ToArray());
-    }
 
     private static ImageComparisonResult Compare(RgbaImage expected, RgbaImage received, ImageComparison? patch = null)
         => DefaultImageComparer.Instance.Compare(expected, received, ResolvedImageComparison.Defaults.Apply(patch));

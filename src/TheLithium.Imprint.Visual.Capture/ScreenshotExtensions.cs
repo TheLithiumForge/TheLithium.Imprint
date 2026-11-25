@@ -24,8 +24,9 @@ public static class ScreenshotExtensions
         => Stage(screenshot, new(name, expression, options, SnapshotUpdate.All));
 
     private static void Stage(Screenshot screenshot, ImageStaging request)
-    {
-        ArgumentNullException.ThrowIfNull(screenshot);
-        ImageAssertion.Stage(screenshot.Image, request, ImageAssertion.Platform(PlatformNames.Of(screenshot.Platform)), screenshot.AppComparison);
-    }
+        => Snapshots.Current.CaptureBinary(settings =>
+        {
+            ArgumentNullException.ThrowIfNull(screenshot);
+            return ImageAssertion.Encode(screenshot.Image, request, settings.Visual, PlatformNames.Of(screenshot.Platform), screenshot.AppComparison);
+        });
 }

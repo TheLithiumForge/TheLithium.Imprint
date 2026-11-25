@@ -172,7 +172,9 @@ public sealed class InstrumentSnapshotTests : Task
 
         var parameters = symbol.Parameters.Where(parameter => !CompilerTypeFacts.IsCancellationToken(parameter.Type)).ToArray();
         var options = "new global::TheLithium.Imprint.SnapshotTestOptions()";
-        if (parameters.Length != 0)
+        // A helper with an image argument uses its caller's case. At a test entry point,
+        // RequiresCase asks for an explicit key so distinct image rows keep separate baselines.
+        if (parameters.Length != 0 && !parameters.Any(parameter => CompilerTypeFacts.DedicatedCapture(parameter.Type) != null))
         {
             var fields = string.Join(", ", parameters.Select(parameter => $"@{parameter.Name}"));
             options = $"new global::TheLithium.Imprint.SnapshotTestOptions {{ Case = global::TheLithium.Imprint.Generation.SnapshotCases.Create(new {{ {fields} }}) }}";

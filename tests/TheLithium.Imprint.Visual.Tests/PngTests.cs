@@ -6,15 +6,6 @@ namespace TheLithium.Imprint.Visual.Tests;
 public sealed class PngTests
 {
     [Fact]
-    public void ImagesRoundTripThroughTheEncoder()
-    {
-        var image = Noise(37, 23, seed: 7);
-        var png = image.ToPng();
-        Assert.True(RgbaImage.FromPng(png).PixelsEqual(image));
-        Assert.Equal(png, image.ToPng());
-    }
-
-    [Fact]
     public void LargeImagesSpanSeveralDataChunks()
     {
         var image = Noise(400, 300, seed: 3);

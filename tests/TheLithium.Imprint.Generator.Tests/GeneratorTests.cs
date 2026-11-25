@@ -336,7 +336,7 @@ public sealed class GeneratorTests
         Assert.EndsWith("{ Explicit = true, Conditional = true });", Registration(result, "Tests.Custom()"));
     }
 
-    /// <summary>A library that marks its capture method and type the way TheLithium.Imprint.Visual does, read back through metadata.</summary>
+    /// <summary>A type with its own assertion, read from assembly metadata like RgbaImage.</summary>
     private static readonly Lazy<MetadataReference> MarkedLibrary = new(() =>
     {
         const string library = """
@@ -345,11 +345,6 @@ public sealed class GeneratorTests
             {
                 [SnapshotCaptureType("AssertImage")]
                 public sealed class Picture { public int Width { get; set; } }
-                public static class PictureExtensions
-                {
-                    [SnapshotCaptureMethod]
-                    public static void AssertImage(this Picture picture, string? name = null) { }
-                }
             }
             """;
         var compilation = CSharpCompilation.Create("TheLithium.Imprint.Visual", [CSharpSyntaxTree.ParseText(library)], References,
@@ -359,23 +354,6 @@ public sealed class GeneratorTests
         Assert.True(emitted.Success, string.Join(Environment.NewLine, emitted.Diagnostics));
         return MetadataReference.CreateFromImage(image.ToArray());
     });
-
-    [Fact]
-    public void AMarkedCaptureMethodRegistersItsTest()
-    {
-        var result = Generate("""
-            using TheLithium.Imprint;
-            using TheLithium.Imprint.Generation;
-            public class Tests
-            {
-                [Xunit.Fact]
-                public void Screen() => TestExecution.Run(() => new Picture().AssertImage(), new SnapshotTestOptions(), sourceFile: "Tests.cs", sourceLine: 101);
-            }
-            namespace Xunit { public sealed class FactAttribute : System.Attribute { } }
-            """, MarkedLibrary.Value);
-        Assert.Empty(result.Errors);
-        Assert.EndsWith("null));", Registration(result, "Tests.Screen()"));
-    }
 
     [Fact]
     public void AssertSnapshotRejectsATypeWithItsOwnCaptureMethod()

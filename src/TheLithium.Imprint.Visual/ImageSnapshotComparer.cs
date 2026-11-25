@@ -4,10 +4,10 @@ using TheLithium.Imprint.Comparison.Models;
 namespace TheLithium.Imprint.Visual;
 
 /// <summary>
-/// What Core calls when a stored PNG and a new capture differ in bytes. It decodes the baseline, treats identical
+/// What Core calls when a stored PNG and a new capture differ in bytes. It decodes both files, treats identical
 /// pixels as identical content, and otherwise asks the image comparer, turning its diff into an attachment.
 /// </summary>
-internal sealed class ImageSnapshotComparer(RgbaImage received, ResolvedImageComparison comparison, IImageComparer comparer, int maxPixels)
+internal sealed class ImageSnapshotComparer(ResolvedImageComparison comparison, IImageComparer comparer, int maxPixels)
     : IBinarySnapshotComparer
 {
     public BinaryComparisonResult Compare(byte[] expected, byte[] receivedBytes, CancellationToken cancellation)
@@ -22,6 +22,8 @@ internal sealed class ImageSnapshotComparer(RgbaImage received, ResolvedImageCom
             return new(false, $"The stored PNG can't be read, so it can't match: {error.Message}", []);
         }
 
+        cancellation.ThrowIfCancellationRequested();
+        var received = RgbaImage.FromPng(receivedBytes, maxPixels);
         if (stored.PixelsEqual(received))
         {
             return BinaryComparisonResult.Same;

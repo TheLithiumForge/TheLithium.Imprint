@@ -172,7 +172,7 @@ public sealed class SnapshotScope : IDisposable
     }
 
     /// <summary>Stages a binary snapshot under the same naming, limit and approval rules as a text capture.</summary>
-    internal void CaptureBinary(BinaryCapture capture)
+    internal void CaptureBinary(Func<EffectiveSettings, BinaryCapture> prepare)
     {
         lock (_gate)
         {
@@ -181,6 +181,12 @@ public sealed class SnapshotScope : IDisposable
             try
             {
                 _settings.Cancellation.ThrowIfCancellationRequested();
+                if (_values.Count >= SnapshotLimits.MaximumEntries)
+                {
+                    throw new SnapshotCaptureException($"A test may capture at most {SnapshotLimits.MaximumEntries} values.");
+                }
+
+                var capture = prepare(_settings);
                 Settings.ValidateUpdate(capture.Update);
                 if (!SnapshotFileNames.IsBinary(capture.Extension) || capture.Extension != Path.GetExtension(capture.Extension))
                 {
@@ -191,11 +197,6 @@ public sealed class SnapshotScope : IDisposable
                 {
                     throw new SnapshotCaptureException(
                         $"The capture exceeds the {_settings.MaxBytesFor(capture.Extension)}-byte image limit. Raise visual.maxBytesPerImage if it's expected.");
-                }
-
-                if (_values.Count >= SnapshotLimits.MaximumEntries)
-                {
-                    throw new SnapshotCaptureException($"A test may capture at most {SnapshotLimits.MaximumEntries} values.");
                 }
 
                 var name = ResolveName(capture.Name, capture.Expression);
