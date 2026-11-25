@@ -122,7 +122,7 @@ internal sealed class MacDriver : IPlatformDriver
                 return (null, problem);
             }, settings.StartTimeout, cancellationToken).ConfigureAwait(false)).Number;
 
-        public async Task<RgbaImage> CaptureAsync(CancellationToken cancellationToken)
+        public async Task<RgbaImage> CaptureAsync(int maxPixels, CancellationToken cancellationToken)
         {
             if (MacNative.Windows().All(window => window.Number != _window))
             {
@@ -139,7 +139,7 @@ internal sealed class MacDriver : IPlatformDriver
                 {
                     throw new SnapshotCaptureException("screencapture wrote no file. The window might have closed during the capture.");
                 }
-                return RgbaImage.FromPng(await File.ReadAllBytesAsync(file, cancellationToken).ConfigureAwait(false), SnapshotLimits.MaximumImagePixels);
+                return RgbaImage.FromPng(await File.ReadAllBytesAsync(file, cancellationToken).ConfigureAwait(false), maxPixels);
             }
             finally
             {

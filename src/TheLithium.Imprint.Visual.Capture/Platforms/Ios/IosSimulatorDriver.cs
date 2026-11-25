@@ -157,14 +157,14 @@ internal sealed class IosSession(string udid, FileStream hold, string bundleId, 
         }
     }
 
-    public async Task<RgbaImage> CaptureAsync(CancellationToken cancellationToken)
+    public async Task<RgbaImage> CaptureAsync(int maxPixels, CancellationToken cancellationToken)
     {
         var file = Path.Combine(Path.GetTempPath(), $"imprint-ios-{Guid.NewGuid():N}.png");
         try
         {
             (await IosSimulatorDriver.SimctlAsync(["io", udid, "screenshot", "--type=png", file], Short, cancellationToken).ConfigureAwait(false))
                 .EnsureSuccess("simctl", ["io", udid, "screenshot"]);
-            return RgbaImage.FromPng(await File.ReadAllBytesAsync(file, cancellationToken).ConfigureAwait(false), SnapshotLimits.MaximumImagePixels);
+            return RgbaImage.FromPng(await File.ReadAllBytesAsync(file, cancellationToken).ConfigureAwait(false), maxPixels);
         }
         finally
         {

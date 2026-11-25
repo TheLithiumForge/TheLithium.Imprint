@@ -214,7 +214,7 @@ internal sealed class WaylandSession(SwayCompositor compositor, OwnedProcess pro
     internal async Task WaitForWindowAsync(CancellationToken cancellationToken)
         => _windowProcess = (await FindAsync(cancellationToken).ConfigureAwait(false)).ProcessId;
 
-    public async Task<RgbaImage> CaptureAsync(CancellationToken cancellationToken)
+    public async Task<RgbaImage> CaptureAsync(int maxPixels, CancellationToken cancellationToken)
     {
         var window = await FindAsync(cancellationToken).ConfigureAwait(false);
         await compositor.MessageAsync([string.Create(CultureInfo.InvariantCulture, $"[pid={window.ProcessId}] focus")], cancellationToken).ConfigureAwait(false);
@@ -222,7 +222,7 @@ internal sealed class WaylandSession(SwayCompositor compositor, OwnedProcess pro
         var run = new ToolRun(TimeSpan.FromSeconds(20), MaxPng, compositor.ClientEnvironment);
         var result = await ToolProcess.RunAsync(ToolLocator.Find("grim") ?? "grim", ["-s", "1", "-t", "png", "-g", geometry, "-"], run, cancellationToken).ConfigureAwait(false);
         result.EnsureSuccess("grim", ["-g", geometry]);
-        return RgbaImage.FromPng(result.Output, SnapshotLimits.MaximumImagePixels);
+        return RgbaImage.FromPng(result.Output, maxPixels);
     }
 
     public async ValueTask DisposeAsync()

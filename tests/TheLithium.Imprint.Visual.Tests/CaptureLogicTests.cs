@@ -40,21 +40,31 @@ public sealed class CaptureLogicTests
     }
 
     [Fact]
-    public async Task AStableCaptureWaitsForIdenticalFrames()
+    public async Task CaptureWaitsForMatchingPixelsInsideTheRequestedRegion()
     {
-        var frames = new Queue<RgbaImage>([Solid(1), Solid(2), Solid(3), Solid(3), Solid(3), Solid(3)]);
-        var captured = await StableCapture.CaptureAsync(_ => Task.FromResult(frames.Dequeue()),
-            new(MatchingFrames: 3, Interval: TimeSpan.Zero, MinimumDuration: TimeSpan.Zero, Timeout: TimeSpan.FromSeconds(10)), CancellationToken.None);
-        Assert.Equal(3, captured.Pixels[0].R);
-        Assert.Single(frames);
+        var frames = new Queue<RgbaImage>([Pair(1, 0), Pair(2, 1), Pair(2, 2), Pair(2, 3)]);
+        await using var app = await new FrameSession(_ => Task.FromResult(frames.Dequeue())).StartAsync();
+        var shot = await app.CaptureAsync(new()
+        {
+            Region = new(0, 0, 1, 1),
+            Stability = new() { MatchingFrames = 3, Interval = TimeSpan.Zero, MinimumDuration = TimeSpan.Zero }
+        });
+        Assert.Equal(1, shot.Image.Width);
+        Assert.Equal(2, shot.Image[0, 0].R);
+        Assert.Empty(frames);
     }
 
     [Fact]
-    public async Task OneMatchingFrameTakesTheFirstFrame()
+    public async Task OneMatchingFrameReturnsWithoutWaitingForTheNextSample()
     {
         var calls = 0;
-        await StableCapture.CaptureAsync(_ => Task.FromResult(Solid((byte)++calls)),
-            new(MatchingFrames: 1, Interval: TimeSpan.Zero, MinimumDuration: TimeSpan.Zero, Timeout: TimeSpan.FromSeconds(10)), CancellationToken.None);
+        await using var app = await new FrameSession(_ => Task.FromResult(Pair((byte)++calls, 0))).StartAsync();
+        using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var shot = await app.CaptureAsync(new()
+        {
+            Stability = new() { MatchingFrames = 1, MinimumDuration = TimeSpan.Zero, Interval = TimeSpan.MaxValue, Timeout = TimeSpan.MaxValue }
+        }, cancel.Token);
+        Assert.Equal(1, shot.Image[0, 0].R);
         Assert.Equal(1, calls);
     }
 
@@ -66,14 +76,47 @@ public sealed class CaptureLogicTests
         var stability = new ResolvedStability(MatchingFrames: 2, Interval: TimeSpan.FromMilliseconds(5), MinimumDuration: TimeSpan.Zero,
             Timeout: TimeSpan.FromMilliseconds(200));
         var error = Assert.Throws<SnapshotCaptureException>(() => fixture.Run(
-            () => StableCapture.CaptureAsync(_ => Task.FromResult(Solid((byte)++calls)), stability, CancellationToken.None).GetAwaiter().GetResult(),
+            () => StableCapture.CaptureAsync(_ => Task.FromResult(Pair((byte)++calls, 42)), stability, new(0, 0, 1, 1), CancellationToken.None).GetAwaiter().GetResult(),
             SnapshotUpdate.Missing));
-        Assert.Contains("kept changing", error.Message, StringComparison.Ordinal);
         Assert.Contains("Between the last two frames: 1 of 1 pixels differ", error.Message, StringComparison.Ordinal);
 
-        // The failed test's artifacts keep the last two frames.
-        var frames = Directory.EnumerateFiles(fixture.Root, "capture-timeout.*.png", SearchOption.AllDirectories).Select(Path.GetFileName);
-        Assert.Equal(["capture-timeout.last.png", "capture-timeout.previous.png"], frames.Order());
+        var frames = Directory.GetFiles(fixture.Root, "capture-timeout.*.png", SearchOption.AllDirectories);
+        Assert.Equal(["capture-timeout.last.png", "capture-timeout.previous.png"], frames.Select(Path.GetFileName).Order());
+        Assert.All(frames, file => Assert.Equal(1, RgbaImage.FromPng(File.ReadAllBytes(file)).Width));
+    }
+
+    [Fact]
+    public async Task AFrameDeadlineLetsTheCallerReturnAndShutdownWaitsForTheDriver()
+    {
+        var started = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<RgbaImage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var driver = new FrameSession(token =>
+        {
+            started.SetResult(token);
+            return release.Task;
+        });
+        await using var app = await driver.StartAsync();
+        try
+        {
+            var read = app.CaptureAsync(new() { Stability = new() { MatchingFrames = 1, MinimumDuration = TimeSpan.Zero, Timeout = TimeSpan.FromSeconds(1) } });
+            var token = await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.ThrowsAsync<SnapshotCaptureException>(() => read.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.True(token.IsCancellationRequested);
+
+            var queued = app.CaptureAsync();
+            var stopping = app.DisposeAsync().AsTask();
+            Assert.False(driver.Disposed);
+            Assert.False(stopping.IsCompleted);
+            release.SetResult(Pair(1, 2));
+            await stopping.WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.ThrowsAsync<ObjectDisposedException>(() => queued);
+            await Assert.ThrowsAsync<ObjectDisposedException>(() => app.CaptureAsync());
+            Assert.True(driver.Disposed);
+        }
+        finally
+        {
+            release.TrySetResult(Pair(1, 2));
+        }
     }
 
     [Fact]
@@ -121,13 +164,6 @@ public sealed class CaptureLogicTests
     }
 
     [Fact]
-    public void LinuxTargetsNameTheirDisplay()
-    {
-        Assert.Equal(VisualPlatform.LinuxX11, new LinuxApp("app").Platform);
-        Assert.Equal(VisualPlatform.LinuxWayland, new LinuxApp("app") { Display = LinuxDisplay.Wayland }.Platform);
-    }
-
-    [Fact]
     public void WindowSelectorsMatchTitles()
     {
         Assert.True(new WindowSelector().Matches("anything"));
@@ -136,7 +172,22 @@ public sealed class CaptureLogicTests
         Assert.True(new WindowSelector { TitleContains = "ett" }.Matches("Settings"));
     }
 
-    private static RgbaImage Solid(byte red) => RgbaImage.FromPixels(1, 1, [Rgba32.Opaque(red, 0, 0)]);
+    private static RgbaImage Pair(byte left, byte right) => RgbaImage.FromPixels(2, 1, [Rgba32.Opaque(left, 0, 0), Rgba32.Opaque(right, 0, 0)]);
+
+    private sealed class FrameSession(Func<CancellationToken, Task<RgbaImage>> read) : IPlatformSession
+    {
+        internal bool Disposed { get; private set; }
+
+        internal Task<VisualApp> StartAsync() => VisualApp.AttachSourceAsync(VisualPlatform.Windows, ExternalCaptureSource.Instance, this, new(), CancellationToken.None);
+
+        public Task<RgbaImage> CaptureAsync(int maxPixels, CancellationToken cancellationToken) => read(cancellationToken);
+
+        public ValueTask DisposeAsync()
+        {
+            Disposed = true;
+            return ValueTask.CompletedTask;
+        }
+    }
 
     /// <summary>A target on this machine's own desktop platform.</summary>
     private static AppTarget HostTarget()

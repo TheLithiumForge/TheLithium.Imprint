@@ -23,7 +23,7 @@ internal interface ICaptureSource
 /// <summary>One source attached to one running app.</summary>
 internal interface ICaptureSession : IAsyncDisposable
 {
-    Task<RgbaImage> CaptureAsync(CancellationToken cancellationToken);
+    Task<RgbaImage> CaptureAsync(int maxPixels, CancellationToken cancellationToken);
 }
 
 /// <summary>The app as the platform starts it, plus what a source adds, such as arguments for an agent.</summary>
@@ -48,7 +48,7 @@ internal sealed class ExternalCaptureSource : ICaptureSource
 
     private sealed class Session(IPlatformSession platform) : ICaptureSession
     {
-        public Task<RgbaImage> CaptureAsync(CancellationToken cancellationToken) => platform.CaptureAsync(cancellationToken);
+        public Task<RgbaImage> CaptureAsync(int maxPixels, CancellationToken cancellationToken) => platform.CaptureAsync(maxPixels, cancellationToken);
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

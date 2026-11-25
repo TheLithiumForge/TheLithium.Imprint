@@ -261,7 +261,7 @@ internal sealed class X11Session(X11Display display, OwnedProcess process, Sessi
             return (null, problem);
         }, settings.StartTimeout, cancellationToken).ConfigureAwait(false)).Frame;
 
-    public unsafe Task<RgbaImage> CaptureAsync(CancellationToken cancellationToken)
+    public unsafe Task<RgbaImage> CaptureAsync(int maxPixels, CancellationToken cancellationToken)
     {
         var connection = display.Connection;
         if (XGetWindowAttributes(connection, _frame, out var frame) == 0 || frame.MapState != IsViewable)

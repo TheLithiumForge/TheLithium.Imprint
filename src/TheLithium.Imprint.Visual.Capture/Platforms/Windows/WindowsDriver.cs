@@ -87,7 +87,7 @@ internal sealed class WindowsSession(int processId, WindowsLaunch? launch, Sessi
     internal async Task WaitForWindowAsync(CancellationToken cancellationToken)
         => _window = await FindWindowAsync(cancellationToken).ConfigureAwait(false);
 
-    public async Task<RgbaImage> CaptureAsync(CancellationToken cancellationToken)
+    public async Task<RgbaImage> CaptureAsync(int maxPixels, CancellationToken cancellationToken)
     {
         if (!IsWindowVisible(_window))
         {

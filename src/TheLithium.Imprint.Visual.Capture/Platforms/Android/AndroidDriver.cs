@@ -222,8 +222,8 @@ internal sealed class AndroidSession(AdbDevice device, FileStream hold, string p
         }
     }
 
-    public async Task<RgbaImage> CaptureAsync(CancellationToken cancellationToken)
-        => RgbaImage.FromPng(await device.ScreenshotAsync(cancellationToken).ConfigureAwait(false), SnapshotLimits.MaximumImagePixels);
+    public async Task<RgbaImage> CaptureAsync(int maxPixels, CancellationToken cancellationToken)
+        => RgbaImage.FromPng(await device.ScreenshotAsync(cancellationToken).ConfigureAwait(false), maxPixels);
 
     public async ValueTask DisposeAsync()
     {

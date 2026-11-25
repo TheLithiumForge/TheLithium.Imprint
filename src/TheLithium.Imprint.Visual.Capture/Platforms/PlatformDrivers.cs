@@ -22,7 +22,7 @@ internal interface IPlatformDriver
 /// <summary>One running app. Captures are in physical pixels and stopping it releases everything it holds.</summary>
 internal interface IPlatformSession : IAsyncDisposable
 {
-    Task<RgbaImage> CaptureAsync(CancellationToken cancellationToken);
+    Task<RgbaImage> CaptureAsync(int maxPixels, CancellationToken cancellationToken);
 }
 
 internal sealed record SessionSettings(WindowSelector? Window, TimeSpan StartTimeout);
